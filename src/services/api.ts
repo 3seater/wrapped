@@ -1625,7 +1625,12 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
     // Negative = SOL going out (buy), Positive = SOL coming in (sell)
     // Also check native transfers AND WSOL transfers for more accurate SOL attribution
     const WSOL_MINT = 'So11111111111111111111111111111111111111112';
-    const USD1_MINT = 'Gnt27xtC473ZT2Mw5u8wZ68Z3gULkSTb5DuxJy7eJotD'; // PYUSD/USD1 stablecoin on Solana
+    // Common stablecoin mints on Solana
+    const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'; // USDC (6 decimals)
+    const USDT_MINT = 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB'; // USDT (6 decimals)
+    const PYUSD_MINT = 'Gnt27xtC473ZT2Mw5u8wZ68Z3gULkSTb5DuxJy7eJotD'; // PYUSD (6 decimals)
+    // USD1 might be any stablecoin - we'll detect all of them
+    const STABLECOIN_MINTS = [USDC_MINT, USDT_MINT, PYUSD_MINT];
     
     if (walletAccount) {
       const solChangeRaw = parseFloat(walletAccount.nativeBalanceChange?.toString() || '0') / 1e9;
@@ -1849,19 +1854,42 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
         let txUsd1Amount = 0;
         let txUsd1Direction: 'in' | 'out' | null = null;
         
+        console.log(`[TX SCAN] Transaction ${tx.signature?.slice(0, 16)}... - Scanning for USD1...`);
+        
         if (walletAccount && walletAccount.tokenBalanceChanges) {
+          // Log ALL token balance changes to see what we're working with
+          console.log(`[TX SCAN] Found ${walletAccount.tokenBalanceChanges.length} token balance changes:`);
+          walletAccount.tokenBalanceChanges.forEach((tbc: any, idx: number) => {
+            const mint = tbc.mint || tbc.tokenAddress || '';
+            const change = parseFloat(tbc.tokenAmount?.toString() || '0');
+            console.log(`  [${idx}] ${mint.slice(0, 8)}... change: ${change}, direction: ${change > 0 ? 'IN' : 'OUT'}`);
+          });
+          
           for (const tbc of walletAccount.tokenBalanceChanges) {
             const mint = tbc.mint || tbc.tokenAddress || '';
-            if (mint === USD1_MINT) {
-              const usd1Change = parseFloat(tbc.tokenAmount?.toString() || '0');
-              const usd1Amount = Math.abs(usd1Change) / 1e9; // Convert from smallest unit
+            
+            // Check if this is any stablecoin (USDC, USDT, PYUSD, etc.)
+            if (STABLECOIN_MINTS.includes(mint)) {
+              const stablecoinChange = parseFloat(tbc.tokenAmount?.toString() || '0');
               
-              if (usd1Amount > 0.01) {
-                txUsd1Amount = usd1Amount;
-                txUsd1Direction = usd1Change > 0 ? 'in' : 'out';
-                console.log(`[USD1 TX LEVEL] Detected USD1 in transaction: ${txUsd1Direction === 'in' ? 'receiving' : 'spending'} ${usd1Amount.toFixed(2)} USD1`);
+              // CRITICAL: USDC and USDT use 6 decimals, not 9!
+              // PYUSD uses 6 decimals too
+              const decimals = (mint === USDC_MINT || mint === USDT_MINT || mint === PYUSD_MINT) ? 6 : 9;
+              const divisor = Math.pow(10, decimals);
+              const stablecoinAmount = Math.abs(stablecoinChange) / divisor;
+              
+              console.log(`[STABLECOIN CANDIDATE] Found stablecoin ${mint.slice(0, 8)}... with raw change: ${stablecoinChange}, amount: ${stablecoinAmount.toFixed(6)} (decimals: ${decimals})`);
+              
+              if (stablecoinAmount > 0.01) {
+                txUsd1Amount = stablecoinAmount;
+                txUsd1Direction = stablecoinChange > 0 ? 'in' : 'out';
+                console.log(`[USD1 TX LEVEL] ✅ Detected stablecoin in transaction: ${txUsd1Direction === 'in' ? 'receiving' : 'spending'} ${stablecoinAmount.toFixed(2)} USD (mint: ${mint.slice(0, 8)}...)`);
               }
             }
+          }
+          
+          if (txUsd1Amount === 0) {
+            console.log(`[TX SCAN] ⚠️ No USD1 found in this transaction`);
           }
         }
         
@@ -1888,17 +1916,9 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
             console.log(`[WSOL SKIP] Skipping WSOL in tokenBalanceChanges - this is the payment, not a token trade`);
             continue;
           }
-          if (currentTokenMint === USD1_MINT) {
-            console.log(`[USD1 SKIP] Skipping USD1 in tokenBalanceChanges - this is stablecoin payment, not a token trade`);
-            continue;
-          }
-          // Skip other common stablecoins by mint address
-          const stablecoinMints = [
-            'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // USDC
-            'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', // USDT
-          ];
-          if (stablecoinMints.includes(currentTokenMint)) {
-            console.log(`[STABLECOIN SKIP] Skipping stablecoin in tokenBalanceChanges - this is the payment`);
+          // Skip all stablecoins - they're payment methods, not traded tokens
+          if (STABLECOIN_MINTS.includes(currentTokenMint)) {
+            console.log(`[STABLECOIN SKIP] Skipping stablecoin ${currentTokenMint.slice(0, 8)}... in tokenBalanceChanges - this is the payment, not a token trade`);
             continue;
           }
           
@@ -2003,6 +2023,8 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
             let tradeValueUSD = 0;
             let usedStablecoin = false;
             
+            console.log(`[TRADE MATCH] Token: ${currentTokenMint.slice(0, 8)}..., Type: ${currentTradeType}, TX USD1: ${txUsd1Amount}, Direction: ${txUsd1Direction}`);
+            
             // Check if this transaction has USD1 movement in the correct direction for this trade type
             if (txUsd1Amount > 0) {
               // For BUY: USD1 should be going OUT (spent)
@@ -2010,9 +2032,11 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
               const isUsd1TradeMatch = (currentTradeType === 'buy' && txUsd1Direction === 'out') ||
                                        (currentTradeType === 'sell' && txUsd1Direction === 'in');
               
+              console.log(`[TRADE MATCH] Is match? ${isUsd1TradeMatch} (buy+out: ${currentTradeType === 'buy' && txUsd1Direction === 'out'}, sell+in: ${currentTradeType === 'sell' && txUsd1Direction === 'in'})`);
+              
               if (isUsd1TradeMatch) {
                 // This trade used USD1 stablecoin
-                console.log(`[USD1 TRADE] ${currentTradeType.toUpperCase()} using USD1: ${txUsd1Amount.toFixed(2)} USD for token ${currentTokenMint.slice(0, 8)}`);
+                console.log(`[USD1 TRADE] ✅ ${currentTradeType.toUpperCase()} using USD1: ${txUsd1Amount.toFixed(2)} USD for token ${currentTokenMint.slice(0, 8)}`);
                 tradeValueUSD = txUsd1Amount;
                 usedStablecoin = true;
                 
@@ -2022,7 +2046,11 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
                 tokenSOLVolume = tradeValueUSD / solPriceForTrade; // USD / SOL price = SOL amount
                 
                 console.log(`[USD1 CONVERSION] ${txUsd1Amount.toFixed(2)} USD = ${tokenSOLVolume.toFixed(4)} SOL (@ $${solPriceForTrade.toFixed(2)}/SOL)`);
+              } else {
+                console.log(`[TRADE MATCH] ❌ No match - USD1 direction doesn't match trade type`);
               }
+            } else {
+              console.log(`[TRADE MATCH] No USD1 in this transaction, will use SOL`);
             }
             
             // Use appropriate SOL amount based on trade type (if not stablecoin trade)
