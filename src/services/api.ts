@@ -2460,7 +2460,10 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
             const from = nt.fromUserAccount || nt.from || '';
             const to = nt.toUserAccount || nt.to || '';
             const amt = parseFloat(nt.amount?.toString() || '0') / 1e9;
-            console.log(`  [${idx}] ${amt.toFixed(6)} SOL: ${from.slice(0, 8)}... → ${to.slice(0, 8)}... (from=wallet:${from === walletAddress}, to=wallet:${to === walletAddress})`);
+            console.log(`  [${idx}] ${amt.toFixed(6)} SOL:`);
+            console.log(`       FROM: ${from.slice(0, 16)}... (wallet: ${from === walletAddress})`);
+            console.log(`       TO:   ${to.slice(0, 16)}... (wallet: ${to === walletAddress})`);
+            console.log(`       Will count as: ${from === walletAddress && to !== walletAddress ? 'SOL OUT' : to === walletAddress && from !== walletAddress ? 'SOL IN' : 'SKIPPED'}`);
           });
           
           for (const natTransfer of tx.nativeTransfers) {
