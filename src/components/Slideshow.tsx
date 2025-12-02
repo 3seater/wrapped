@@ -38,6 +38,10 @@ interface SlideshowProps {
 export const Slideshow: React.FC<SlideshowProps> = ({ data, slides, onRestart }) => {
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
   const [isCapturing, setIsCapturing] = useState(false);
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [capturedImage, setCapturedImage] = useState<string>('');
+  const [capturedBlob, setCapturedBlob] = useState<Blob | null>(null);
+  const [tweetText, setTweetText] = useState('');
   const [showToast, setShowToast] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
   const slideRef = useRef<HTMLDivElement>(null);
@@ -74,96 +78,89 @@ export const Slideshow: React.FC<SlideshowProps> = ({ data, slides, onRestart })
         logging: false,
         useCORS: true,
         allowTaint: true,
-        // Ignore elements with class 'no-capture'
         ignoreElements: (element) => {
-          return element.classList.contains('no-capture') || 
-                 element.classList.contains('share-btn') ||
+          return element.classList.contains('share-btn') ||
                  element.classList.contains('slide-navigation') ||
                  element.classList.contains('progress-bar') ||
                  element.classList.contains('restart-btn');
         }
       });
       
-      // Convert to blob
+      // Convert to blob and data URL
       canvas.toBlob(async (blob) => {
         if (!blob) return;
         
+        // Create data URL for preview
+        const dataUrl = canvas.toDataURL('image/png');
+        
         // Generate tweet text based on slide
-        let tweetText = '';
+        let generatedTweetText = '';
         
         switch (currentSlide.id) {
           case 'trades-made':
-            tweetText = `I made ${data.totalTrades.toLocaleString()} trades this year! 📊 #CryptoWrapped`;
+            generatedTweetText = `I made ${data.totalTrades.toLocaleString()} trades this year! 📊 #CryptoWrapped`;
             break;
           case 'total-volume':
-            tweetText = `Total trading volume: ${data.totalVolume.toLocaleString()} ${data.currency}! 💰 #CryptoWrapped`;
+            generatedTweetText = `Total trading volume: ${data.totalVolume.toLocaleString()} ${data.currency}! 💰 #CryptoWrapped`;
             break;
           case 'biggest-wins':
-            tweetText = `My biggest win: ${data.biggestWins[0]?.coin || 'N/A'} 🚀 #CryptoWrapped`;
+            generatedTweetText = `My biggest win: ${data.biggestWins[0]?.coin || 'N/A'} 🚀 #CryptoWrapped`;
             break;
           case 'biggest-losses':
-            tweetText = `Lessons learned from my trades 📚 #CryptoWrapped`;
+            generatedTweetText = `Lessons learned from my trades 📚 #CryptoWrapped`;
             break;
           case 'total-pnl':
             const pnlSign = data.totalPnL >= 0 ? '+' : '';
-            tweetText = `My 2024 Crypto Wrapped: ${pnlSign}$${Math.abs(data.totalPnL).toLocaleString()} PnL 🎯 #CryptoWrapped`;
+            generatedTweetText = `My 2024 Crypto Wrapped: ${pnlSign}$${Math.abs(data.totalPnL).toLocaleString()} PnL 🎯 #CryptoWrapped`;
             break;
           default:
-            tweetText = `Check out my Crypto Wrapped! #CryptoWrapped`;
+            generatedTweetText = `Check out my Crypto Wrapped! #CryptoWrapped`;
         }
         
-        // Try Web Share API first (works on mobile/some browsers with image support)
-        if (navigator.share && navigator.canShare && navigator.canShare({ files: [new File([blob], 'crypto-wrapped.png', { type: 'image/png' })] })) {
-          try {
-            const file = new File([blob], `crypto-wrapped-${currentSlide.id}.png`, { type: 'image/png' });
-            await navigator.share({
-              title: 'My Crypto Wrapped',
-              text: tweetText,
-              files: [file]
-            });
-            console.log('Shared successfully via Web Share API');
-            setIsCapturing(false);
-            return;
-          } catch (shareError) {
-            console.log('Web Share API failed, falling back to download');
-          }
-        }
-        
-        // Fallback: Download + Copy to clipboard + Open Twitter
-        // Silently download the image
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.download = `crypto-wrapped-${currentSlide.id}.png`;
-        link.href = url;
-        link.click();
-        URL.revokeObjectURL(url);
-        
-        // Try to copy image to clipboard
-        try {
-          const item = new ClipboardItem({ 'image/png': blob });
-          await navigator.clipboard.write([item]);
-          console.log('✅ Image copied to clipboard');
-        } catch (clipboardError) {
-          console.log('⚠️ Clipboard not supported');
-        }
-        
-        // Open Twitter immediately (no popup)
-        const twitterUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(tweetText)}`;
-        window.open(twitterUrl, '_blank');
-        
-        // Show brief success toast
-        setToastMessage('📸 Image copied! Paste with Ctrl+V in Twitter');
-        setShowToast(true);
-        setTimeout(() => setShowToast(false), 3000);
+        // Store image and text, show modal
+        setCapturedImage(dataUrl);
+        setCapturedBlob(blob);
+        setTweetText(generatedTweetText);
+        setShowShareModal(true);
+        setIsCapturing(false);
         
       }, 'image/png');
       
     } catch (error) {
       console.error('Error capturing slide:', error);
       alert('Failed to capture slide. Please try again.');
-    } finally {
-      setTimeout(() => setIsCapturing(false), 1000);
+      setIsCapturing(false);
     }
+  };
+
+  const copyImage = async () => {
+    if (!capturedBlob) return;
+    
+    try {
+      const item = new ClipboardItem({ 'image/png': capturedBlob });
+      await navigator.clipboard.write([item]);
+      setToastMessage('✅ Image copied to clipboard!');
+      setShowToast(true);
+      setTimeout(() => setShowToast(false), 2000);
+    } catch (error) {
+      console.error('Failed to copy image:', error);
+      // Fallback: download the image
+      const url = URL.createObjectURL(capturedBlob);
+      const link = document.createElement('a');
+      link.download = `crypto-wrapped-${currentSlide.id}.png`;
+      link.href = url;
+      link.click();
+      URL.revokeObjectURL(url);
+      setToastMessage('📥 Image downloaded!');
+      setShowToast(true);
+      setTimeout(() => setShowToast(false), 2000);
+    }
+  };
+
+  const openTwitter = () => {
+    const twitterUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(tweetText)}`;
+    window.open(twitterUrl, '_blank');
+    setShowShareModal(false);
   };
 
   // Handle keyboard navigation
@@ -312,6 +309,163 @@ export const Slideshow: React.FC<SlideshowProps> = ({ data, slides, onRestart })
         </button>
       )}
 
+      {/* Share Modal */}
+      {showShareModal && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(0, 0, 0, 0.9)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 9999,
+            padding: '20px'
+          }}
+          onClick={() => setShowShareModal(false)}
+        >
+          <div
+            style={{
+              background: '#fff',
+              borderRadius: '20px',
+              padding: '32px',
+              maxWidth: '600px',
+              width: '100%',
+              maxHeight: '90vh',
+              overflow: 'auto',
+              position: 'relative'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Close button */}
+            <button
+              onClick={() => setShowShareModal(false)}
+              style={{
+                position: 'absolute',
+                top: '16px',
+                right: '16px',
+                background: 'transparent',
+                border: 'none',
+                fontSize: '24px',
+                cursor: 'pointer',
+                color: '#666',
+                padding: '8px',
+                lineHeight: 1
+              }}
+            >
+              ×
+            </button>
+
+            <h2 style={{
+              fontFamily: 'Spotify Mix, sans-serif',
+              fontSize: '24px',
+              fontWeight: 'bold',
+              marginBottom: '24px',
+              color: '#000',
+              textAlign: 'center'
+            }}>
+              Share to 𝕏 (Twitter)
+            </h2>
+
+            {/* Image preview */}
+            <div style={{
+              width: '100%',
+              maxHeight: '400px',
+              overflow: 'hidden',
+              borderRadius: '12px',
+              marginBottom: '24px',
+              border: '2px solid #eee'
+            }}>
+              <img
+                src={capturedImage}
+                alt="Captured slide"
+                style={{
+                  width: '100%',
+                  height: 'auto',
+                  display: 'block'
+                }}
+              />
+            </div>
+
+            {/* Tweet text preview */}
+            <div style={{
+              background: '#f5f5f5',
+              padding: '16px',
+              borderRadius: '12px',
+              marginBottom: '24px',
+              fontFamily: 'Spotify Mix, sans-serif',
+              fontSize: '14px',
+              color: '#333',
+              lineHeight: 1.5
+            }}>
+              {tweetText}
+            </div>
+
+            {/* Action buttons */}
+            <div style={{
+              display: 'flex',
+              gap: '12px',
+              flexDirection: 'column'
+            }}>
+              <button
+                onClick={copyImage}
+                style={{
+                  background: '#000',
+                  color: '#fff',
+                  border: 'none',
+                  padding: '16px',
+                  borderRadius: '12px',
+                  fontSize: '16px',
+                  fontWeight: 'bold',
+                  cursor: 'pointer',
+                  fontFamily: 'Spotify Mix, sans-serif',
+                  transition: 'all 0.2s ease'
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = '#333'}
+                onMouseLeave={(e) => e.currentTarget.style.background = '#000'}
+              >
+                📋 Copy Image
+              </button>
+
+              <button
+                onClick={openTwitter}
+                style={{
+                  background: '#1DA1F2',
+                  color: '#fff',
+                  border: 'none',
+                  padding: '16px',
+                  borderRadius: '12px',
+                  fontSize: '16px',
+                  fontWeight: 'bold',
+                  cursor: 'pointer',
+                  fontFamily: 'Spotify Mix, sans-serif',
+                  transition: 'all 0.2s ease'
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = '#1a8cd8'}
+                onMouseLeave={(e) => e.currentTarget.style.background = '#1DA1F2'}
+              >
+                𝕏 Open Twitter & Paste Image
+              </button>
+            </div>
+
+            <p style={{
+              textAlign: 'center',
+              fontSize: '12px',
+              color: '#999',
+              marginTop: '16px',
+              fontFamily: 'Spotify Mix, sans-serif',
+              lineHeight: 1.5
+            }}>
+              Click "Copy Image" then "Open Twitter".<br />
+              Paste the image in Twitter with Ctrl+V (Cmd+V on Mac)
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Toast notification */}
       {showToast && (
         <div
@@ -326,7 +480,7 @@ export const Slideshow: React.FC<SlideshowProps> = ({ data, slides, onRestart })
             borderRadius: '25px',
             fontSize: '16px',
             fontWeight: 'bold',
-            zIndex: 1000,
+            zIndex: 10000,
             animation: 'fadeInOut 3s ease-in-out',
             boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
             fontFamily: 'Spotify Mix, sans-serif'
