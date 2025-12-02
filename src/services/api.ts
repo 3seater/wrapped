@@ -1996,8 +1996,14 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
             let solOut = 0; // SOL going out (for buys)
             let solIn = 0;  // SOL coming in (for sells)
             
+            // CRITICAL FIX: For USD1 routed trades, we need to look at NET SOL movement
+            // The transaction might be: Token → USD1 → SOL (all in one tx)
+            // We need to capture the final SOL IN/OUT regardless of USD1 intermediate steps
+            
             // Check native SOL transfers
+            console.log(`[SOL TRACKING] Checking native transfers for ${currentTokenMint.slice(0, 8)}...`);
             if (tx.nativeTransfers && Array.isArray(tx.nativeTransfers)) {
+              console.log(`[SOL TRACKING] Found ${tx.nativeTransfers.length} native transfers`);
               for (const transfer of tx.nativeTransfers) {
                 const fromAddr = transfer.fromUserAccount || transfer.from || '';
                 const toAddr = transfer.toUserAccount || transfer.to || '';
@@ -2005,11 +2011,15 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
                 
                 if (fromAddr === walletAddress && toAddr !== walletAddress && amount > 0.0001) {
                   solOut += amount; // SOL going out (buy)
+                  console.log(`[SOL TRACKING] Native SOL OUT: ${amount.toFixed(4)} SOL`);
                 } else if (toAddr === walletAddress && fromAddr !== walletAddress && amount > 0.0001) {
                   solIn += amount; // SOL coming in (sell)
+                  console.log(`[SOL TRACKING] Native SOL IN: ${amount.toFixed(4)} SOL`);
                 }
               }
             }
+            
+            console.log(`[SOL TRACKING] Total native SOL: OUT=${solOut.toFixed(4)}, IN=${solIn.toFixed(4)}`);
             
             // CRITICAL FIX: Check token balance changes for WSOL FIRST - this is MORE ACCURATE!
             // tokenBalanceChanges shows the actual NET balance change, which is what we need
@@ -2068,43 +2078,49 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
               // Use the balance change (more accurate, avoids double-counting)
               if (wsolBalanceChangeDirection === 'out') {
                 solOut += wsolFromBalanceChange;
+                console.log(`[SOL TRACKING] WSOL OUT (from balance change): ${wsolFromBalanceChange.toFixed(4)} SOL`);
               } else if (wsolBalanceChangeDirection === 'in') {
                 solIn += wsolFromBalanceChange;
+                console.log(`[SOL TRACKING] WSOL IN (from balance change): ${wsolFromBalanceChange.toFixed(4)} SOL`);
               }
             }
             
-            // Check if this trade used USD1 stablecoin instead of SOL
+            console.log(`[SOL TRACKING] After WSOL: Total OUT=${solOut.toFixed(4)}, IN=${solIn.toFixed(4)}`);
+            
+            // CRITICAL: For USD1-routed trades, PRIORITIZE actual SOL movement over USD1 detection
+            // USD1 is just routing: SOL → USD1 → Token (buy) or Token → USD1 → SOL (sell)
+            // We should use the ACTUAL SOL IN/OUT, not the intermediate USD1 step
             let tradeValueUSD = 0;
             let usedStablecoin = false;
             
-            console.log(`[TRADE MATCH] Token: ${currentTokenMint.slice(0, 8)}..., Type: ${currentTradeType}, TX USD1: ${txUsd1Amount}, Direction: ${txUsd1Direction}`);
+            console.log(`[TRADE ROUTING] Token: ${currentTokenMint.slice(0, 8)}..., Type: ${currentTradeType}`);
+            console.log(`[TRADE ROUTING] SOL movement: OUT=${solOut.toFixed(4)}, IN=${solIn.toFixed(4)}`);
+            console.log(`[TRADE ROUTING] USD1 detected: ${txUsd1Amount.toFixed(2)} (direction: ${txUsd1Direction})`);
             
-            // Check if this transaction has USD1 movement in the correct direction for this trade type
-            if (txUsd1Amount > 0) {
-              // For BUY: USD1 should be going OUT (spent)
-              // For SELL: USD1 should be coming IN (received)
+            // Check if we have actual SOL movement (this works for both direct SOL trades and USD1-routed trades)
+            const hasActualSolMovement = (currentTradeType === 'buy' && solOut > 0.001) || 
+                                         (currentTradeType === 'sell' && solIn > 0.001);
+            
+            if (hasActualSolMovement) {
+              console.log(`[TRADE ROUTING] ✅ Using actual SOL movement (works for both direct and USD1-routed trades)`);
+              // Will use solOut/solIn below in the normal flow
+            } else if (txUsd1Amount > 0) {
+              // FALLBACK: Only use USD1 if we don't have SOL movement
               const isUsd1TradeMatch = (currentTradeType === 'buy' && txUsd1Direction === 'out') ||
                                        (currentTradeType === 'sell' && txUsd1Direction === 'in');
               
-              console.log(`[TRADE MATCH] Is match? ${isUsd1TradeMatch} (buy+out: ${currentTradeType === 'buy' && txUsd1Direction === 'out'}, sell+in: ${currentTradeType === 'sell' && txUsd1Direction === 'in'})`);
-              
               if (isUsd1TradeMatch) {
-                // This trade used USD1 stablecoin
-                console.log(`[USD1 TRADE] ✅ ${currentTradeType.toUpperCase()} using USD1: ${txUsd1Amount.toFixed(2)} USD for token ${currentTokenMint.slice(0, 8)}`);
+                console.log(`[TRADE ROUTING] ⚠️ No SOL movement detected, falling back to USD1 value`);
                 tradeValueUSD = txUsd1Amount;
                 usedStablecoin = true;
                 
                 // Convert to SOL equivalent for volume tracking
                 const tradeTimestamp = Math.floor(timestamp.getTime() / 1000);
                 const solPriceForTrade = getSolPriceForTimestamp(tradeTimestamp);
-                tokenSOLVolume = tradeValueUSD / solPriceForTrade; // USD / SOL price = SOL amount
+                tokenSOLVolume = tradeValueUSD / solPriceForTrade;
                 
-                console.log(`[USD1 CONVERSION] ${txUsd1Amount.toFixed(2)} USD = ${tokenSOLVolume.toFixed(4)} SOL (@ $${solPriceForTrade.toFixed(2)}/SOL)`);
-              } else {
-                console.log(`[TRADE MATCH] ❌ No match - USD1 direction doesn't match trade type`);
+                console.log(`[USD1 FALLBACK] ${txUsd1Amount.toFixed(2)} USD = ${tokenSOLVolume.toFixed(4)} SOL (@ $${solPriceForTrade.toFixed(2)}/SOL)`);
               }
-            } else {
-              console.log(`[TRADE MATCH] No USD1 in this transaction, will use SOL`);
             }
             
             // Use appropriate SOL amount based on trade type (if not stablecoin trade)
