@@ -1803,6 +1803,11 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
     // Debug: Check if transaction has token activity but isn't identified as trade
     const hasTokenActivity = (walletAccount?.tokenBalanceChanges && walletAccount.tokenBalanceChanges.length > 0) || 
                              (tx.tokenTransfers && tx.tokenTransfers.length > 0);
+    
+    // DEBUG: Log every transaction to see what's happening
+    const txSigDebug = tx.signature?.slice(0, 16) || 'UNKNOWN';
+    console.log(`[TRADE CHECK] TX ${txSigDebug}... isTrade: ${isTrade}, type: ${tx.type}, hasDEXProgram: ${hasDEXProgram}, isDEXTrade: ${isDEXTrade}, hasTokenActivity: ${hasTokenActivity}`);
+    
     if (hasTokenActivity && !isTrade) {
       console.warn(`⚠️  Transaction has token activity but NOT identified as trade:`, {
         signature: tx.signature?.slice(0, 16) + '...',
@@ -1835,6 +1840,13 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
       
       // Debug: Log transaction signature for tracking
       const txSig = tx.signature?.slice(0, 16) || 'UNKNOWN';
+      
+      // DEBUG: Log ALL transactions being processed
+      console.log(`\n[TX PROCESS] ====== Transaction ${txSig}... ======`);
+      console.log(`[TX PROCESS] hasTokenBalanceChanges: ${hasTokenBalanceChanges} (count: ${walletAccount?.tokenBalanceChanges?.length || 0})`);
+      console.log(`[TX PROCESS] hasTokenTransfers: ${hasTokenTransfersData} (count: ${tx.tokenTransfers?.length || 0})`);
+      console.log(`[TX PROCESS] walletAccount found: ${!!walletAccount}`);
+      
       if (hasTokenTransfersData && !hasTokenBalanceChanges) {
         console.log(`[TX DEBUG] ${txSig}... has tokenTransfers but NO tokenBalanceChanges - will process via tokenTransfers`);
       }
