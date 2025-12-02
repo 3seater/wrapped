@@ -38,6 +38,8 @@ interface SlideshowProps {
 export const Slideshow: React.FC<SlideshowProps> = ({ data, slides, onRestart }) => {
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
   const [isCapturing, setIsCapturing] = useState(false);
+  const [showToast, setShowToast] = useState(false);
+  const [toastMessage, setToastMessage] = useState('');
   const slideRef = useRef<HTMLDivElement>(null);
 
   const nextSlide = () => {
@@ -86,25 +88,6 @@ export const Slideshow: React.FC<SlideshowProps> = ({ data, slides, onRestart })
       canvas.toBlob(async (blob) => {
         if (!blob) return;
         
-        // Create download link
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.download = `crypto-wrapped-${currentSlide.id}.png`;
-        link.href = url;
-        link.click();
-        
-        // Try to copy image to clipboard for easy pasting into Twitter
-        try {
-          const item = new ClipboardItem({ 'image/png': blob });
-          await navigator.clipboard.write([item]);
-          console.log('Image copied to clipboard!');
-        } catch (clipboardError) {
-          console.log('Clipboard not supported, image downloaded instead');
-        }
-        
-        // Clean up
-        URL.revokeObjectURL(url);
-        
         // Generate tweet text based on slide
         let tweetText = '';
         
@@ -129,14 +112,49 @@ export const Slideshow: React.FC<SlideshowProps> = ({ data, slides, onRestart })
             tweetText = `Check out my Crypto Wrapped! #CryptoWrapped`;
         }
         
-        // Show user-friendly message with instructions
-        setTimeout(() => {
-          alert('📸 Image captured successfully!\n\n✅ Image downloaded to your device\n✅ Image copied to clipboard\n\n📱 Next steps:\n1. Twitter will open in a new tab\n2. Paste the image (Ctrl+V or Cmd+V)\n3. Or click the image icon and select the downloaded file\n4. Tweet!');
-          
-          // Open Twitter with pre-filled text
-          const twitterUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(tweetText)}`;
-          window.open(twitterUrl, '_blank');
-        }, 100);
+        // Try Web Share API first (works on mobile/some browsers with image support)
+        if (navigator.share && navigator.canShare && navigator.canShare({ files: [new File([blob], 'crypto-wrapped.png', { type: 'image/png' })] })) {
+          try {
+            const file = new File([blob], `crypto-wrapped-${currentSlide.id}.png`, { type: 'image/png' });
+            await navigator.share({
+              title: 'My Crypto Wrapped',
+              text: tweetText,
+              files: [file]
+            });
+            console.log('Shared successfully via Web Share API');
+            setIsCapturing(false);
+            return;
+          } catch (shareError) {
+            console.log('Web Share API failed, falling back to download');
+          }
+        }
+        
+        // Fallback: Download + Copy to clipboard + Open Twitter
+        // Silently download the image
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.download = `crypto-wrapped-${currentSlide.id}.png`;
+        link.href = url;
+        link.click();
+        URL.revokeObjectURL(url);
+        
+        // Try to copy image to clipboard
+        try {
+          const item = new ClipboardItem({ 'image/png': blob });
+          await navigator.clipboard.write([item]);
+          console.log('✅ Image copied to clipboard');
+        } catch (clipboardError) {
+          console.log('⚠️ Clipboard not supported');
+        }
+        
+        // Open Twitter immediately (no popup)
+        const twitterUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(tweetText)}`;
+        window.open(twitterUrl, '_blank');
+        
+        // Show brief success toast
+        setToastMessage('📸 Image copied! Paste with Ctrl+V in Twitter');
+        setShowToast(true);
+        setTimeout(() => setShowToast(false), 3000);
         
       }, 'image/png');
       
@@ -144,7 +162,7 @@ export const Slideshow: React.FC<SlideshowProps> = ({ data, slides, onRestart })
       console.error('Error capturing slide:', error);
       alert('Failed to capture slide. Please try again.');
     } finally {
-      setIsCapturing(false);
+      setTimeout(() => setIsCapturing(false), 1000);
     }
   };
 
@@ -292,6 +310,30 @@ export const Slideshow: React.FC<SlideshowProps> = ({ data, slides, onRestart })
         >
           Create Another Wrapped
         </button>
+      )}
+
+      {/* Toast notification */}
+      {showToast && (
+        <div
+          style={{
+            position: 'fixed',
+            bottom: '100px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            background: 'rgba(0, 0, 0, 0.9)',
+            color: 'white',
+            padding: '16px 32px',
+            borderRadius: '25px',
+            fontSize: '16px',
+            fontWeight: 'bold',
+            zIndex: 1000,
+            animation: 'fadeInOut 3s ease-in-out',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+            fontFamily: 'Spotify Mix, sans-serif'
+          }}
+        >
+          {toastMessage}
+        </div>
       )}
     </div>
   );
