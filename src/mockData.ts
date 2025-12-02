@@ -3,7 +3,7 @@ import { TradesMadeSlide } from './components/slides/TradesMadeSlide';
 import { TotalVolumeSlide } from './components/slides/TotalVolumeSlide';
 import { BiggestLossesSlide } from './components/slides/BiggestLossesSlide';
 import { BiggestWinsSlide } from './components/slides/BiggestWinsSlide';
-import { PaperhandsSlide } from './components/slides/PaperhandsSlide';
+// import { PaperhandsSlide } from './components/slides/PaperhandsSlide'; // Temporarily disabled
 import { TotalPnLSlide } from './components/slides/TotalPnLSlide';
 
 export const mockTradingData: TradingData = {
@@ -98,12 +98,13 @@ const generateSlides = (): SlideData[] => {
       ...getNextColor(),
       component: BiggestWinsSlide
     },
-    {
-      id: 'paperhands',
-      title: 'Paperhands',
-      ...getNextColor(),
-      component: PaperhandsSlide
-    },
+    // Paperhands slide temporarily disabled
+    // {
+    //   id: 'paperhands',
+    //   title: 'Paperhands',
+    //   ...getNextColor(),
+    //   component: PaperhandsSlide
+    // },
     {
       id: 'total-pnl',
       title: 'Total PnL',
