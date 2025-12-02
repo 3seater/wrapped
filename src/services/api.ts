@@ -1953,6 +1953,9 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
           const currentTokenBalanceChange = parseFloat(tbc.tokenAmount?.toString() || '0');
           const currentTradeType: 'buy' | 'sell' | null = currentTokenBalanceChange > 0 ? 'buy' : currentTokenBalanceChange < 0 ? 'sell' : null;
           
+          // DEBUG: Log trade type detection
+          console.log(`\n[TRADE TYPE] Token ${currentTokenMint.slice(0, 8)}...: balance change=${currentTokenBalanceChange}, detected as: ${currentTradeType?.toUpperCase() || 'NULL'}`);
+          
           // Debug: Log when we find a potential buy that might be skipped
           if (currentTokenBalanceChange > 0 && (!currentTokenMint || currentTokenAmount === 0 || !currentTradeType)) {
             console.warn(`⚠️  Potential BUY transaction skipped:`, {
@@ -2001,9 +2004,20 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
             // We need to capture the final SOL IN/OUT regardless of USD1 intermediate steps
             
             // Check native SOL transfers
-            console.log(`[SOL TRACKING] Checking native transfers for ${currentTokenMint.slice(0, 8)}...`);
+            console.log(`\n[SOL TRACKING] ========== ${currentTradeType?.toUpperCase()} ${currentTokenMint.slice(0, 8)}... ==========`);
+            console.log(`[SOL TRACKING] Wallet address: ${walletAddress.slice(0, 8)}...`);
+            console.log(`[SOL TRACKING] Token balance change: ${currentTokenBalanceChange} (${currentTokenBalanceChange > 0 ? 'BUYING' : 'SELLING'})`);
+            
             if (tx.nativeTransfers && Array.isArray(tx.nativeTransfers)) {
-              console.log(`[SOL TRACKING] Found ${tx.nativeTransfers.length} native transfers`);
+              console.log(`[SOL TRACKING] Found ${tx.nativeTransfers.length} native transfers in this transaction:`);
+              tx.nativeTransfers.forEach((transfer: any, idx: number) => {
+                const fromAddr = transfer.fromUserAccount || transfer.from || '';
+                const toAddr = transfer.toUserAccount || transfer.to || '';
+                const amount = parseFloat(transfer.amount?.toString() || '0') / 1e9;
+                console.log(`  [${idx}] ${amount.toFixed(6)} SOL: ${fromAddr.slice(0, 8)}... → ${toAddr.slice(0, 8)}...`);
+                console.log(`       From is wallet? ${fromAddr === walletAddress}, To is wallet? ${toAddr === walletAddress}`);
+              });
+              
               for (const transfer of tx.nativeTransfers) {
                 const fromAddr = transfer.fromUserAccount || transfer.from || '';
                 const toAddr = transfer.toUserAccount || transfer.to || '';
@@ -2011,15 +2025,20 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
                 
                 if (fromAddr === walletAddress && toAddr !== walletAddress && amount > 0.0001) {
                   solOut += amount; // SOL going out (buy)
-                  console.log(`[SOL TRACKING] Native SOL OUT: ${amount.toFixed(4)} SOL`);
+                  console.log(`[SOL TRACKING] ✅ Counted as SOL OUT: ${amount.toFixed(4)} SOL (buy)`);
                 } else if (toAddr === walletAddress && fromAddr !== walletAddress && amount > 0.0001) {
                   solIn += amount; // SOL coming in (sell)
-                  console.log(`[SOL TRACKING] Native SOL IN: ${amount.toFixed(4)} SOL`);
+                  console.log(`[SOL TRACKING] ✅ Counted as SOL IN: ${amount.toFixed(4)} SOL (sell)`);
+                } else if (amount > 0.0001) {
+                  console.log(`[SOL TRACKING] ⚠️ Skipped: ${amount.toFixed(4)} SOL (not matching wallet in/out pattern)`);
                 }
               }
+            } else {
+              console.log(`[SOL TRACKING] ⚠️ NO native transfers found in this transaction!`);
             }
             
             console.log(`[SOL TRACKING] Total native SOL: OUT=${solOut.toFixed(4)}, IN=${solIn.toFixed(4)}`);
+            console.log(`[SOL TRACKING] ==============================================\n`);
             
             // CRITICAL FIX: Check token balance changes for WSOL FIRST - this is MORE ACCURATE!
             // tokenBalanceChanges shows the actual NET balance change, which is what we need
@@ -2183,6 +2202,9 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
               }
             } else if (!usedStablecoin && currentTradeType === 'sell') {
               // For sells, use SOL coming in
+              console.log(`\n[SELL PROCESSING] Processing sell for ${currentTokenMint.slice(0, 8)}...`);
+              console.log(`[SELL PROCESSING] solIn from native transfers: ${solIn.toFixed(4)} SOL`);
+              
               // CRITICAL FIX: solIn should already be calculated correctly (only from balance changes OR transfers, not both)
               // But we need to make sure we're not double-counting by using solVolume as fallback
               let solForSell = solIn;
@@ -2203,12 +2225,15 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
               // Using solVolume here would risk double-counting
               
               // Debug logging to track down the doubling issue
+              console.log(`[SELL DEBUG] Token: ${currentTokenMint.slice(0, 8)}, solIn: ${solIn.toFixed(4)}, solForSell: ${solForSell.toFixed(4)}, solVolume: ${solVolume.toFixed(4)}`);
               if (solIn > 0) {
-                console.log(`[SELL DEBUG] Token: ${currentTokenMint.slice(0, 8)}, solIn: ${solIn}, solForSell: ${solForSell}, solVolume: ${solVolume}`);
-                console.log(`[SELL DEBUG] Using solIn (${solIn}) for sell, NOT using solVolume (${solVolume}) to avoid double-counting`);
+                console.log(`[SELL DEBUG] ✅ Using solIn (${solIn.toFixed(4)}) for sell, NOT using solVolume (${solVolume.toFixed(4)}) to avoid double-counting`);
+              } else {
+                console.log(`[SELL DEBUG] ⚠️ solIn is ZERO! This sell will NOT be tracked!`);
               }
               
               if (solForSell > 0) {
+                console.log(`[SELL DEBUG] solForSell > 0, proceeding with sell tracking...`);
                 // If multiple tokens, distribute proportionally
                 const totalTokenAmounts = walletAccount.tokenBalanceChanges
                   .filter((tbc: any) => parseFloat(tbc.tokenAmount?.toString() || '0') < 0) // Only sells
@@ -2363,8 +2388,9 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
               
               tokenStats[currentTokenMint].totalReceivedUSD += finalTradeValueUSD;
               
-              console.log(`✅ SELL: ${tokenStats[currentTokenMint].symbol} (${currentTokenMint.slice(0, 8)}) - ${currentTokenAmount.toFixed(2)} tokens for ${usedStablecoin ? `$${finalTradeValueUSD.toFixed(2)} USD1` : `${tokenSOLVolume.toFixed(4)} SOL ($${finalTradeValueUSD.toFixed(2)} @ $${solPriceForTrade.toFixed(2)}/SOL)`}`);
-              console.log(`   TX: ${tx.signature?.slice(0, 16)}... | solIn: ${solIn}, USD1: ${usedStablecoin ? txUsd1Amount : 0}, tokenSOLVolume: ${tokenSOLVolume}`);
+              console.log(`\n✅✅✅ SELL TRACKED: ${tokenStats[currentTokenMint].symbol} (${currentTokenMint.slice(0, 8)}) - ${currentTokenAmount.toFixed(2)} tokens for ${usedStablecoin ? `$${finalTradeValueUSD.toFixed(2)} USD1` : `${tokenSOLVolume.toFixed(4)} SOL ($${finalTradeValueUSD.toFixed(2)} @ $${solPriceForTrade.toFixed(2)}/SOL)`}`);
+              console.log(`   TX: ${tx.signature?.slice(0, 16)}... | solIn: ${solIn.toFixed(4)}, USD1: ${usedStablecoin ? txUsd1Amount.toFixed(2) : 0}, tokenSOLVolume: ${tokenSOLVolume.toFixed(4)}`);
+              console.log(`   Total received so far for this token: ${tokenStats[currentTokenMint].totalReceivedSOL.toFixed(4)} SOL\n`);
               
               // Update position for tracking (to know if fully sold)
               if (positions[currentTokenMint] && positions[currentTokenMint].amount > 0) {
