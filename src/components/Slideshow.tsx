@@ -62,16 +62,28 @@ export const Slideshow: React.FC<SlideshowProps> = ({ data, slides, onRestart })
     setIsCapturing(true);
     
     try {
-      // Capture the slide as a canvas
+      // Wait for animations/transitions to complete (slideIn animation is 0.5s)
+      await new Promise(resolve => setTimeout(resolve, 600));
+      
+      // Capture the slide as a canvas, excluding UI elements
       const canvas = await html2canvas(slideRef.current, {
         backgroundColor: currentSlide.backgroundColor,
         scale: 2, // Higher quality
         logging: false,
-        useCORS: true
+        useCORS: true,
+        allowTaint: true,
+        // Ignore elements with class 'no-capture'
+        ignoreElements: (element) => {
+          return element.classList.contains('no-capture') || 
+                 element.classList.contains('share-btn') ||
+                 element.classList.contains('slide-navigation') ||
+                 element.classList.contains('progress-bar') ||
+                 element.classList.contains('restart-btn');
+        }
       });
       
       // Convert to blob
-      canvas.toBlob((blob) => {
+      canvas.toBlob(async (blob) => {
         if (!blob) return;
         
         // Create download link
@@ -80,6 +92,15 @@ export const Slideshow: React.FC<SlideshowProps> = ({ data, slides, onRestart })
         link.download = `crypto-wrapped-${currentSlide.id}.png`;
         link.href = url;
         link.click();
+        
+        // Try to copy image to clipboard for easy pasting into Twitter
+        try {
+          const item = new ClipboardItem({ 'image/png': blob });
+          await navigator.clipboard.write([item]);
+          console.log('Image copied to clipboard!');
+        } catch (clipboardError) {
+          console.log('Clipboard not supported, image downloaded instead');
+        }
         
         // Clean up
         URL.revokeObjectURL(url);
@@ -108,9 +129,14 @@ export const Slideshow: React.FC<SlideshowProps> = ({ data, slides, onRestart })
             tweetText = `Check out my Crypto Wrapped! #CryptoWrapped`;
         }
         
-        // Open Twitter with pre-filled text
-        const twitterUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(tweetText)}`;
-        window.open(twitterUrl, '_blank');
+        // Show user-friendly message with instructions
+        setTimeout(() => {
+          alert('📸 Image captured successfully!\n\n✅ Image downloaded to your device\n✅ Image copied to clipboard\n\n📱 Next steps:\n1. Twitter will open in a new tab\n2. Paste the image (Ctrl+V or Cmd+V)\n3. Or click the image icon and select the downloaded file\n4. Tweet!');
+          
+          // Open Twitter with pre-filled text
+          const twitterUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(tweetText)}`;
+          window.open(twitterUrl, '_blank');
+        }, 100);
         
       }, 'image/png');
       
