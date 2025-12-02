@@ -720,7 +720,7 @@ async function processCieloTransactions(transactions: any[], walletAddress: stri
       const tradeType: 'buy' | 'sell' = tx.is_sell === true ? 'sell' : 'buy';
       
       // Final safety check: skip if traded token is SOL or stablecoins (USDC, USDT, etc.)
-      const stablecoins = ['USDC', 'USDT', 'USD', 'BUSD', 'DAI', 'FIDA']; // Common stablecoins
+      const stablecoins = ['USDC', 'USDT', 'USD', 'USD1', 'BUSD', 'DAI', 'FIDA', 'PYUSD']; // Common stablecoins
       const isStablecoin = stablecoins.includes(tradedTokenSymbol.toUpperCase());
       const isSOL = tradedTokenAddress === SOL_MINT || tradedTokenSymbol === 'SOL' || tradedTokenSymbol === 'Wrapped SOL';
       
@@ -1046,6 +1046,25 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
       }
     }
     
+    // Try Jupiter API for token list (very comprehensive)
+    try {
+      const jupUrl = `https://tokens.jup.ag/token/${tokenMint}`;
+      const jupResponse = await fetch(jupUrl);
+      if (jupResponse.ok) {
+        const jupData = await jupResponse.json();
+        if (jupData.symbol) {
+          tokenSymbolCache[tokenMint] = jupData.symbol;
+          // Also cache image if available
+          if (jupData.logoURI && !tokenImageCache[tokenMint]) {
+            tokenImageCache[tokenMint] = jupData.logoURI;
+          }
+          return jupData.symbol;
+        }
+      }
+    } catch (error) {
+      // Fall through to DexScreener
+    }
+    
     // Fallback to DexScreener
     try {
       const url = `https://api.dexscreener.com/latest/dex/tokens/${tokenMint}`;
@@ -1130,6 +1149,21 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
       } catch (error) {
         // Fall through to DexScreener
       }
+    }
+    
+    // Try Jupiter API for token logo (very comprehensive)
+    try {
+      const jupUrl = `https://tokens.jup.ag/token/${tokenMint}`;
+      const jupResponse = await fetch(jupUrl);
+      if (jupResponse.ok) {
+        const jupData = await jupResponse.json();
+        if (jupData.logoURI) {
+          tokenImageCache[tokenMint] = jupData.logoURI;
+          return jupData.logoURI;
+        }
+      }
+    } catch (error) {
+      // Fall through to DexScreener
     }
     
     // Fallback to DexScreener (has images for many tokens)
@@ -1482,9 +1516,20 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
     console.log(`Fetched ${Object.keys(tokenImageCache).length} token images`);
   }
   
+  // Filter transactions to 2025 only
+  const year2025Start = new Date('2025-01-01').getTime() / 1000; // Unix timestamp
+  const year2025End = new Date('2025-12-31T23:59:59').getTime() / 1000;
+  
+  const transactions2025 = transactions.filter(tx => {
+    const timestamp = tx.timestamp || 0;
+    return timestamp >= year2025Start && timestamp <= year2025End;
+  });
+  
+  console.log(`Filtered ${transactions.length} transactions to ${transactions2025.length} from year 2025`);
+  
   // CRITICAL: Sort transactions chronologically (oldest first) so buys are processed before sells
   // This ensures accurate cost basis calculation
-  const sortedTransactions = [...transactions].sort((a, b) => {
+  const sortedTransactions = [...transactions2025].sort((a, b) => {
     const timeA = a.timestamp || 0;
     const timeB = b.timestamp || 0;
     return timeA - timeB; // Oldest first
@@ -1580,6 +1625,7 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
     // Negative = SOL going out (buy), Positive = SOL coming in (sell)
     // Also check native transfers AND WSOL transfers for more accurate SOL attribution
     const WSOL_MINT = 'So11111111111111111111111111111111111111112';
+    const USD1_MINT = 'Gnt27xtC473ZT2Mw5u8wZ68Z3gULkSTb5DuxJy7eJotD'; // PYUSD/USD1 stablecoin on Solana
     
     if (walletAccount) {
       const solChangeRaw = parseFloat(walletAccount.nativeBalanceChange?.toString() || '0') / 1e9;
@@ -1815,11 +1861,24 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
             });
           }
           
-          // CRITICAL: Skip WSOL - it's not a separate token, it's the payment method!
-          // WSOL in tokenBalanceChanges represents SOL in/out, not a token trade
+          // CRITICAL: Skip WSOL and stablecoins - they're payment methods, not token trades!
+          // WSOL/USD1 in tokenBalanceChanges represents payment in/out, not a token trade
           if (currentTokenMint === WSOL_MINT) {
             console.log(`[WSOL SKIP] Skipping WSOL in tokenBalanceChanges - this is the payment, not a token trade`);
-            continue; // Skip WSOL, it's already accounted for in SOL calculations
+            continue;
+          }
+          if (currentTokenMint === USD1_MINT) {
+            console.log(`[USD1 SKIP] Skipping USD1 in tokenBalanceChanges - this is stablecoin payment, not a token trade`);
+            continue;
+          }
+          // Skip other common stablecoins by mint address
+          const stablecoinMints = [
+            'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // USDC
+            'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', // USDT
+          ];
+          if (stablecoinMints.includes(currentTokenMint)) {
+            console.log(`[STABLECOIN SKIP] Skipping stablecoin in tokenBalanceChanges - this is the payment`);
+            continue;
           }
           
           if (currentTokenMint && currentTokenAmount > 0 && currentTradeType) {
@@ -1857,14 +1916,18 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
               }
             }
             
-            // CRITICAL FIX: Check token balance changes for WSOL FIRST - this is MORE ACCURATE!
+            // CRITICAL FIX: Check token balance changes for WSOL and USD1 FIRST - this is MORE ACCURATE!
             // tokenBalanceChanges shows the actual NET balance change, which is what we need
             // We check this FIRST to avoid double-counting with tokenTransfers
             let wsolFromBalanceChange = 0;
             let wsolBalanceChangeDirection: 'out' | 'in' | null = null;
+            let usd1FromBalanceChange = 0;
+            
             if (walletAccount && walletAccount.tokenBalanceChanges) {
               for (const tbc of walletAccount.tokenBalanceChanges) {
                 const mint = tbc.mint || tbc.tokenAddress || '';
+                
+                // Check for WSOL
                 if (mint === WSOL_MINT) {
                   const wsolChange = parseFloat(tbc.tokenAmount?.toString() || '0');
                   const wsolAmount = Math.abs(wsolChange) / 1e9; // tokenAmount is in lamports
@@ -1878,6 +1941,19 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
                   else if (wsolChange > 0 && wsolAmount > 0.0001) {
                     wsolFromBalanceChange = wsolAmount;
                     wsolBalanceChangeDirection = 'in';
+                  }
+                }
+                
+                // Check for USD1 stablecoin
+                if (mint === USD1_MINT) {
+                  const usd1Change = parseFloat(tbc.tokenAmount?.toString() || '0');
+                  const usd1Amount = Math.abs(usd1Change) / 1e9; // tokenAmount is in smallest unit
+                  
+                  console.log(`[USD1 DETECTED] Balance change: ${usd1Change}, Amount: ${usd1Amount} USD`);
+                  
+                  // Track USD1 balance change (both buy and sell)
+                  if (usd1Amount > 0.01) {
+                    usd1FromBalanceChange = usd1Amount;
                   }
                 }
               }
@@ -1916,8 +1992,24 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
               }
             }
             
-            // Use appropriate SOL amount based on trade type
-            if (currentTradeType === 'buy') {
+            // Check if this trade used USD1 stablecoin instead of SOL
+            let tradeValueUSD = 0;
+            let usedStablecoin = false;
+            
+            if (usd1FromBalanceChange > 0) {
+              // This trade used USD1 stablecoin
+              console.log(`[USD1 TRADE] ${currentTradeType} using USD1: ${usd1FromBalanceChange.toFixed(2)} USD`);
+              tradeValueUSD = usd1FromBalanceChange;
+              usedStablecoin = true;
+              
+              // Convert to SOL equivalent for volume tracking
+              const tradeTimestamp = Math.floor(timestamp.getTime() / 1000);
+              const solPriceForTrade = getSolPriceForTimestamp(tradeTimestamp);
+              tokenSOLVolume = tradeValueUSD / solPriceForTrade; // USD / SOL price = SOL amount
+            }
+            
+            // Use appropriate SOL amount based on trade type (if not stablecoin trade)
+            if (!usedStablecoin && currentTradeType === 'buy') {
               // For buys, use SOL going out
               // CRITICAL FIX: If solOut is 0 (e.g., wrapped SOL or intermediate program),
               // use native balance change as fallback (should be negative for buys)
@@ -1974,7 +2066,7 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
                 }, 0);
                 tokenSOLVolume = totalTokenAmounts > 0 ? (currentTokenAmount / totalTokenAmounts) * solVolume : solVolume / walletAccount.tokenBalanceChanges.length;
               }
-            } else if (currentTradeType === 'sell') {
+            } else if (!usedStablecoin && currentTradeType === 'sell') {
               // For sells, use SOL coming in
               // CRITICAL FIX: solIn should already be calculated correctly (only from balance changes OR transfers, not both)
               // But we need to make sure we're not double-counting by using solVolume as fallback
@@ -2019,8 +2111,6 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
                 tokenSOLVolume = 0; // Will be skipped by the tokenSOLVolume > 0 check below
               }
             }
-            
-            let tradeValueUSD = 0;
             
             // Debug: Log SOL volume calculation for buys specifically
             if (currentTradeType === 'buy') {
@@ -2070,21 +2160,26 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
               }
             }
             
-            if (tokenSOLVolume > 0) {
-              // Use actual SOL volume (most accurate)
-              totalVolumeSOL += tokenSOLVolume; // Track SOL directly
-              tradeValueUSD = tokenSOLVolume * 150; // Convert to USD for display
-              totalVolumeUSD += tradeValueUSD;
+            if (tokenSOLVolume > 0 || usedStablecoin) {
+              // Track volume
+              if (usedStablecoin) {
+                // Already have tradeValueUSD from stablecoin
+                totalVolumeSOL += tokenSOLVolume; // SOL equivalent for volume tracking
+                totalVolumeUSD += tradeValueUSD; // Actual USD value
+              } else {
+                // Use actual SOL volume (most accurate)
+                totalVolumeSOL += tokenSOLVolume; // Track SOL directly
+                // Will be recalculated with proper price below in buy/sell sections
+                const tempTradeValueUSD = tokenSOLVolume * 150;
+                totalVolumeUSD += tempTradeValueUSD;
+              }
             } else {
-              // No SOL volume data - skip this trade (can't calculate PNL without SOL amounts)
-              // This is a critical issue - log detailed info to help debug
-              console.error(`❌ CRITICAL: No SOL volume data for ${currentTokenMint.slice(0, 8)} (${currentTradeType}), skipping trade`);
+              // No SOL or stablecoin volume data - skip this trade
+              console.error(`❌ CRITICAL: No SOL/USD volume data for ${currentTokenMint.slice(0, 8)} (${currentTradeType}), skipping trade`);
               console.error(`   Transaction: ${tx.signature?.slice(0, 16)}...`);
               console.error(`   Total SOL volume: ${solVolume}, Token SOL volume: ${tokenSOLVolume}`);
+              console.error(`   USD1 volume: ${usd1FromBalanceChange}`);
               console.error(`   SOL out: ${solOut}, SOL in: ${solIn}`);
-              console.error(`   Native balance change: ${walletAccount.nativeBalanceChange ? parseFloat(walletAccount.nativeBalanceChange.toString()) / 1e9 : 'N/A'}`);
-              console.error(`   Token balance changes count: ${walletAccount.tokenBalanceChanges.length}`);
-              console.error(`   Token balance change value: ${currentTokenBalanceChange}`);
               console.error(`   This means the ${currentTradeType} won't be tracked!`);
               if (currentTradeType === 'buy') {
                 console.error(`   ⚠️  THIS IS A MISSED BUY - PNL will be incorrect!`);
@@ -2109,8 +2204,8 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
             }
             tokenStats[currentTokenMint].lastTradeDate = timestamp;
 
-            if (currentTradeType === 'buy' && tokenSOLVolume > 0) {
-              // Buying token with SOL - track total spent in SOL
+            if (currentTradeType === 'buy' && (tokenSOLVolume > 0 || usedStablecoin)) {
+              // Buying token with SOL or stablecoin - track total spent
               if (!positions[currentTokenMint]) {
                 positions[currentTokenMint] = { amount: 0, totalCostSOL: 0 };
               }
@@ -2121,26 +2216,40 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
               // Track total SOL spent on this token
               tokenStats[currentTokenMint].totalSpentSOL += tokenSOLVolume;
               
-              // Convert to USD using SOL price at this trade's timestamp (more accurate)
-              const tradeTimestamp = Math.floor(timestamp.getTime() / 1000); // Convert to seconds
-              const solPriceForTrade = getSolPriceForTimestamp(tradeTimestamp);
-              const tradeValueUSD = tokenSOLVolume * solPriceForTrade;
-              tokenStats[currentTokenMint].totalSpentUSD += tradeValueUSD;
+              // Calculate USD value (either from stablecoin or convert SOL)
+              let finalTradeValueUSD = tradeValueUSD;
+              let solPriceForTrade = currentSOLPrice;
               
-              console.log(`Buy: ${tokenStats[currentTokenMint].symbol} (${currentTokenMint.slice(0, 8)}) - ${currentTokenAmount.toFixed(2)} tokens for ${tokenSOLVolume.toFixed(4)} SOL ($${tradeValueUSD.toFixed(2)} @ $${solPriceForTrade.toFixed(2)}/SOL)`);
-            } else if (currentTradeType === 'sell' && tokenSOLVolume > 0) {
-              // Selling token for SOL - track total received in SOL
+              if (!usedStablecoin) {
+                // Convert SOL to USD using historical price
+                const tradeTimestamp = Math.floor(timestamp.getTime() / 1000);
+                solPriceForTrade = getSolPriceForTimestamp(tradeTimestamp);
+                finalTradeValueUSD = tokenSOLVolume * solPriceForTrade;
+              }
+              
+              tokenStats[currentTokenMint].totalSpentUSD += finalTradeValueUSD;
+              
+              console.log(`Buy: ${tokenStats[currentTokenMint].symbol} (${currentTokenMint.slice(0, 8)}) - ${currentTokenAmount.toFixed(2)} tokens for ${usedStablecoin ? `$${finalTradeValueUSD.toFixed(2)} USD1` : `${tokenSOLVolume.toFixed(4)} SOL ($${finalTradeValueUSD.toFixed(2)} @ $${solPriceForTrade.toFixed(2)}/SOL)`}`);
+            } else if (currentTradeType === 'sell' && (tokenSOLVolume > 0 || usedStablecoin)) {
+              // Selling token for SOL or stablecoin - track total received
               tokenStats[currentTokenMint].totalReceivedSOL += tokenSOLVolume;
               tokenStats[currentTokenMint].totalTokensSold += currentTokenAmount;
               
-              // Convert to USD using SOL price at this trade's timestamp (more accurate)
-              const tradeTimestamp = Math.floor(timestamp.getTime() / 1000); // Convert to seconds
-              const solPriceForTrade = getSolPriceForTimestamp(tradeTimestamp);
-              const tradeValueUSD = tokenSOLVolume * solPriceForTrade;
-              tokenStats[currentTokenMint].totalReceivedUSD += tradeValueUSD;
+              // Calculate USD value (either from stablecoin or convert SOL)
+              let finalTradeValueUSD = tradeValueUSD;
+              let solPriceForTrade = currentSOLPrice;
               
-              console.log(`✅ SELL: ${tokenStats[currentTokenMint].symbol} (${currentTokenMint.slice(0, 8)}) - ${currentTokenAmount.toFixed(2)} tokens for ${tokenSOLVolume.toFixed(4)} SOL ($${tradeValueUSD.toFixed(2)} @ $${solPriceForTrade.toFixed(2)}/SOL)`);
-              console.log(`   TX: ${tx.signature?.slice(0, 16)}... | solIn: ${solIn}, tokenSOLVolume: ${tokenSOLVolume}`);
+              if (!usedStablecoin) {
+                // Convert SOL to USD using historical price
+                const tradeTimestamp = Math.floor(timestamp.getTime() / 1000);
+                solPriceForTrade = getSolPriceForTimestamp(tradeTimestamp);
+                finalTradeValueUSD = tokenSOLVolume * solPriceForTrade;
+              }
+              
+              tokenStats[currentTokenMint].totalReceivedUSD += finalTradeValueUSD;
+              
+              console.log(`✅ SELL: ${tokenStats[currentTokenMint].symbol} (${currentTokenMint.slice(0, 8)}) - ${currentTokenAmount.toFixed(2)} tokens for ${usedStablecoin ? `$${finalTradeValueUSD.toFixed(2)} USD1` : `${tokenSOLVolume.toFixed(4)} SOL ($${finalTradeValueUSD.toFixed(2)} @ $${solPriceForTrade.toFixed(2)}/SOL)`}`);
+              console.log(`   TX: ${tx.signature?.slice(0, 16)}... | solIn: ${solIn}, USD1In: ${usd1FromBalanceChange}, tokenSOLVolume: ${tokenSOLVolume}`);
               
               // Update position for tracking (to know if fully sold)
               if (positions[currentTokenMint] && positions[currentTokenMint].amount > 0) {
