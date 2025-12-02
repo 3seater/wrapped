@@ -1854,15 +1854,21 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
         let txUsd1Amount = 0;
         let txUsd1Direction: 'in' | 'out' | null = null;
         
-        console.log(`[TX SCAN] Transaction ${tx.signature?.slice(0, 16)}... - Scanning for USD1...`);
+        console.log(`\n[TX SCAN] ========================================`);
+        console.log(`[TX SCAN] Transaction ${tx.signature?.slice(0, 16)}...`);
+        console.log(`[TX SCAN] Scanning for stablecoins (USDC, USDT, PYUSD)...`);
         
+        // Check BOTH tokenBalanceChanges AND tokenTransfers for stablecoins
+        let foundStablecoin = false;
+        
+        // First check tokenBalanceChanges
         if (walletAccount && walletAccount.tokenBalanceChanges) {
-          // Log ALL token balance changes to see what we're working with
           console.log(`[TX SCAN] Found ${walletAccount.tokenBalanceChanges.length} token balance changes:`);
           walletAccount.tokenBalanceChanges.forEach((tbc: any, idx: number) => {
             const mint = tbc.mint || tbc.tokenAddress || '';
             const change = parseFloat(tbc.tokenAmount?.toString() || '0');
-            console.log(`  [${idx}] ${mint.slice(0, 8)}... change: ${change}, direction: ${change > 0 ? 'IN' : 'OUT'}`);
+            const isStablecoin = STABLECOIN_MINTS.includes(mint);
+            console.log(`  [${idx}] ${mint.slice(0, 12)}... change: ${change}, direction: ${change > 0 ? 'IN' : 'OUT'}${isStablecoin ? ' (STABLECOIN!)' : ''}`);
           });
           
           for (const tbc of walletAccount.tokenBalanceChanges) {
@@ -1878,20 +1884,56 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
               const divisor = Math.pow(10, decimals);
               const stablecoinAmount = Math.abs(stablecoinChange) / divisor;
               
-              console.log(`[STABLECOIN CANDIDATE] Found stablecoin ${mint.slice(0, 8)}... with raw change: ${stablecoinChange}, amount: ${stablecoinAmount.toFixed(6)} (decimals: ${decimals})`);
+              console.log(`[STABLECOIN FOUND] In tokenBalanceChanges: ${mint.slice(0, 12)}... raw: ${stablecoinChange}, amount: ${stablecoinAmount.toFixed(6)} (decimals: ${decimals})`);
               
               if (stablecoinAmount > 0.01) {
                 txUsd1Amount = stablecoinAmount;
                 txUsd1Direction = stablecoinChange > 0 ? 'in' : 'out';
-                console.log(`[USD1 TX LEVEL] ✅ Detected stablecoin in transaction: ${txUsd1Direction === 'in' ? 'receiving' : 'spending'} ${stablecoinAmount.toFixed(2)} USD (mint: ${mint.slice(0, 8)}...)`);
+                foundStablecoin = true;
+                console.log(`[USD1 TX LEVEL] ✅ Detected stablecoin: ${txUsd1Direction === 'in' ? 'receiving' : 'spending'} ${stablecoinAmount.toFixed(2)} USD (mint: ${mint.slice(0, 12)}...)`);
               }
             }
           }
+        }
+        
+        // Also check tokenTransfers if we didn't find it in tokenBalanceChanges
+        if (!foundStablecoin && tx.tokenTransfers && Array.isArray(tx.tokenTransfers)) {
+          console.log(`[TX SCAN] Checking ${tx.tokenTransfers.length} token transfers for stablecoins...`);
           
-          if (txUsd1Amount === 0) {
-            console.log(`[TX SCAN] ⚠️ No USD1 found in this transaction`);
+          for (const transfer of tx.tokenTransfers) {
+            const mint = transfer.mint || transfer.tokenAddress || transfer.token || '';
+            
+            if (STABLECOIN_MINTS.includes(mint)) {
+              const fromAddr = transfer.fromUserAccount || transfer.from || '';
+              const toAddr = transfer.toUserAccount || transfer.to || '';
+              const rawAmount = parseFloat(transfer.tokenAmount?.toString() || '0');
+              
+              // USDC/USDT/PYUSD use 6 decimals
+              const decimals = 6;
+              const stablecoinAmount = rawAmount / Math.pow(10, decimals);
+              
+              console.log(`[STABLECOIN FOUND] In tokenTransfers: ${mint.slice(0, 12)}... from ${fromAddr.slice(0, 8)}... to ${toAddr.slice(0, 8)}... amount: ${stablecoinAmount.toFixed(6)}`);
+              
+              // Check if this is wallet receiving or sending stablecoin
+              if (toAddr === walletAddress && fromAddr !== walletAddress && stablecoinAmount > 0.01) {
+                txUsd1Amount = stablecoinAmount;
+                txUsd1Direction = 'in';
+                foundStablecoin = true;
+                console.log(`[USD1 TX LEVEL] ✅ Detected stablecoin IN: receiving ${stablecoinAmount.toFixed(2)} USD`);
+              } else if (fromAddr === walletAddress && toAddr !== walletAddress && stablecoinAmount > 0.01) {
+                txUsd1Amount = stablecoinAmount;
+                txUsd1Direction = 'out';
+                foundStablecoin = true;
+                console.log(`[USD1 TX LEVEL] ✅ Detected stablecoin OUT: spending ${stablecoinAmount.toFixed(2)} USD`);
+              }
+            }
           }
         }
+        
+        if (!foundStablecoin) {
+          console.log(`[TX SCAN] ⚠️ No stablecoins found in this transaction (checked tokenBalanceChanges and tokenTransfers)`);
+        }
+        console.log(`[TX SCAN] ========================================\n`);
         
         for (const tbc of walletAccount.tokenBalanceChanges) {
           const currentTokenMint = tbc.mint || tbc.tokenAddress || '';
