@@ -2548,8 +2548,10 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
           
           for (const wsolTransfer of tx.tokenTransfers) {
             const wsolMint = wsolTransfer.mint || wsolTransfer.tokenAddress || wsolTransfer.token || '';
-            console.log(`  Transfer mint: ${wsolMint.slice(0, 12)}... (length: ${wsolMint.length})`);
-            console.log(`  Matches WSOL? ${wsolMint === WSOL_MINT}`);
+            console.log(`  Transfer mint: "${wsolMint}" (length: ${wsolMint.length})`);
+            console.log(`  Expected WSOL: "${WSOL_MINT}" (length: ${WSOL_MINT.length})`);
+            console.log(`  Exact match? ${wsolMint === WSOL_MINT}`);
+            console.log(`  Trimmed match? ${wsolMint.trim() === WSOL_MINT.trim()}`);
             
             if (wsolMint === WSOL_MINT) {
               const wsolFrom = wsolTransfer.fromUserAccount || wsolTransfer.from || '';
