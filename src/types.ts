@@ -39,7 +39,7 @@ export interface TradingData {
     potentialProfit: number;
     chain?: string; // Which chain this occurred on
   }>;
-  totalPnL: number; // Always in USD for EVM chains
+  totalPnL: number; // Always in USD (converted from SOL for Solana chains)
   biggestTradingDay: {
     date: string;
     trades: number;

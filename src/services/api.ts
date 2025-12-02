@@ -1515,8 +1515,9 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
       // Use absolute value for volume, but preserve sign for buy/sell detection
       const solChangeAbs = Math.abs(solChangeRaw);
       
-      // Check native transfers - sum up SOL going out (for buys) or coming in (for sells)
-      let solFromTransfers = 0;
+      // Check native transfers - separate incoming and outgoing to avoid double-counting
+      let solOutFromTransfers = 0;
+      let solInFromTransfers = 0;
       if (tx.nativeTransfers && Array.isArray(tx.nativeTransfers)) {
         for (const transfer of tx.nativeTransfers) {
           const fromAddr = transfer.fromUserAccount || transfer.from || '';
@@ -1525,39 +1526,66 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
           
           // SOL going out from wallet (buy)
           if (fromAddr === walletAddress && toAddr !== walletAddress && amount > 0) {
-            solFromTransfers += amount;
+            solOutFromTransfers = Math.max(solOutFromTransfers, amount); // Use max, not sum
           }
-          // SOL coming in to wallet (sell) - we'll use this separately if needed
+          // SOL coming in to wallet (sell)
+          else if (toAddr === walletAddress && fromAddr !== walletAddress && amount > 0) {
+            solInFromTransfers = Math.max(solInFromTransfers, amount); // Use max, not sum
+          }
         }
       }
+      // Use the larger of in or out (not both!) to avoid double-counting
+      const solFromTransfers = Math.max(solOutFromTransfers, solInFromTransfers);
       
       // Check WSOL transfers - these represent SOL movement
-      let wsolFromTransfers = 0;
+      // CRITICAL FIX: Separate incoming and outgoing to avoid double-counting
+      let wsolOutFromTransfers = 0;
+      let wsolInFromTransfers = 0;
       if (tx.tokenTransfers && Array.isArray(tx.tokenTransfers)) {
         for (const transfer of tx.tokenTransfers) {
           const mint = transfer.mint || transfer.tokenAddress || transfer.token || '';
           if (mint === WSOL_MINT) {
             const fromAddr = transfer.fromUserAccount || transfer.from || '';
             const toAddr = transfer.toUserAccount || transfer.to || '';
-            const amount = parseFloat(transfer.tokenAmount?.toString() || '0');
-            const wsolAmount = amount / 1e9; // WSOL has 9 decimals like SOL
+            // tokenAmount might be in different formats - try both raw and divided by 1e9
+            const rawAmount = parseFloat(transfer.tokenAmount?.toString() || '0');
+            // If amount is very large (> 1e6), it's likely in lamports, divide by 1e9
+            // If amount is small (< 1000), it might already be in SOL
+            const wsolAmount = rawAmount > 1e6 ? rawAmount / 1e9 : rawAmount;
             
-            // WSOL going out = SOL going out
+            // WSOL going out = SOL going out (buy)
             if (fromAddr === walletAddress && toAddr !== walletAddress && wsolAmount > 0) {
-              wsolFromTransfers += wsolAmount;
+              wsolOutFromTransfers = Math.max(wsolOutFromTransfers, wsolAmount); // Use max, not sum
             }
-            // WSOL coming in = SOL coming in
+            // WSOL coming in = SOL coming in (sell)
             else if (toAddr === walletAddress && fromAddr !== walletAddress && wsolAmount > 0) {
-              wsolFromTransfers += wsolAmount;
+              wsolInFromTransfers = Math.max(wsolInFromTransfers, wsolAmount); // Use max, not sum
             }
           }
         }
       }
+      // Use the larger of in or out (not both!) to avoid double-counting swaps
+      const wsolFromTransfers = Math.max(wsolOutFromTransfers, wsolInFromTransfers);
       
-      // Use the larger of: native balance change, SOL from transfers, or WSOL from transfers
+      // CRITICAL: Also check tokenBalanceChanges for WSOL - this is MORE ACCURATE!
+      // tokenBalanceChanges shows the actual balance change, which is what we need
+      let wsolFromBalanceChanges = 0;
+      if (walletAccount && walletAccount.tokenBalanceChanges) {
+        for (const tbc of walletAccount.tokenBalanceChanges) {
+          const mint = tbc.mint || tbc.tokenAddress || '';
+          if (mint === WSOL_MINT) {
+            const wsolChange = parseFloat(tbc.tokenAmount?.toString() || '0');
+            const wsolAmount = Math.abs(wsolChange) / 1e9; // tokenAmount is in lamports
+            wsolFromBalanceChanges = Math.max(wsolFromBalanceChanges, wsolAmount);
+          }
+        }
+      }
+      
+      // Use the larger of: native balance change, SOL from transfers, WSOL from transfers, or WSOL from balance changes
       // This helps catch cases where balance change might be 0 due to swaps or WSOL usage
+      // tokenBalanceChanges is most accurate for WSOL because it shows the actual balance change
       const solFromBalance = solChangeAbs > 0.0001 ? solChangeAbs : 0;
-      solVolume = Math.max(solFromBalance, solFromTransfers, wsolFromTransfers);
+      solVolume = Math.max(solFromBalance, solFromTransfers, wsolFromTransfers, wsolFromBalanceChanges);
       
       // Note: We'll use the token balance change direction to determine buy/sell, not SOL direction
       // because SOL direction can be affected by fees and other transfers
@@ -1683,8 +1711,22 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
       const hasTokenBalanceChanges = walletAccount && walletAccount.tokenBalanceChanges && walletAccount.tokenBalanceChanges.length > 0;
       const hasTokenTransfersData = tx.tokenTransfers && Array.isArray(tx.tokenTransfers) && tx.tokenTransfers.length > 0;
       
+      // Debug: Log transaction signature for tracking
+      const txSig = tx.signature?.slice(0, 16) || 'UNKNOWN';
+      if (hasTokenTransfersData && !hasTokenBalanceChanges) {
+        console.log(`[TX DEBUG] ${txSig}... has tokenTransfers but NO tokenBalanceChanges - will process via tokenTransfers`);
+      }
+      
       if (hasTokenBalanceChanges) {
         // Process each token balance change as a separate trade
+        const txSigShort = tx.signature?.slice(0, 16) || 'UNKNOWN';
+        console.log(`[TX ${txSigShort}] Processing ${walletAccount.tokenBalanceChanges.length} token balance changes:`);
+        walletAccount.tokenBalanceChanges.forEach((tbc: any, idx: number) => {
+          const mint = (tbc.mint || tbc.tokenAddress || '').slice(0, 12);
+          const change = parseFloat(tbc.tokenAmount?.toString() || '0');
+          console.log(`  [${idx}] Mint: ${mint}, Change: ${change}, Type: ${change > 0 ? 'BUY' : 'SELL'}`);
+        });
+        
         for (const tbc of walletAccount.tokenBalanceChanges) {
           const currentTokenMint = tbc.mint || tbc.tokenAddress || '';
           const currentTokenAmount = Math.abs(parseFloat(tbc.tokenAmount?.toString() || '0'));
@@ -1700,6 +1742,13 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
               tradeType: currentTradeType,
               tx: tx.signature?.slice(0, 16) + '...'
             });
+          }
+          
+          // CRITICAL: Skip WSOL - it's not a separate token, it's the payment method!
+          // WSOL in tokenBalanceChanges represents SOL in/out, not a token trade
+          if (currentTokenMint === WSOL_MINT) {
+            console.log(`[WSOL SKIP] Skipping WSOL in tokenBalanceChanges - this is the payment, not a token trade`);
+            continue; // Skip WSOL, it's already accounted for in SOL calculations
           }
           
           if (currentTokenMint && currentTokenAmount > 0 && currentTradeType) {
@@ -1737,16 +1786,45 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
               }
             }
             
-            // Check WSOL (Wrapped SOL) transfers - these represent SOL movement
-            // WSOL going out = SOL going out (buy), WSOL coming in = SOL coming in (sell)
-            if (tx.tokenTransfers && Array.isArray(tx.tokenTransfers)) {
+            // CRITICAL FIX: Check token balance changes for WSOL FIRST - this is MORE ACCURATE!
+            // tokenBalanceChanges shows the actual NET balance change, which is what we need
+            // We check this FIRST to avoid double-counting with tokenTransfers
+            let wsolFromBalanceChange = 0;
+            let wsolBalanceChangeDirection: 'out' | 'in' | null = null;
+            if (walletAccount && walletAccount.tokenBalanceChanges) {
+              for (const tbc of walletAccount.tokenBalanceChanges) {
+                const mint = tbc.mint || tbc.tokenAddress || '';
+                if (mint === WSOL_MINT) {
+                  const wsolChange = parseFloat(tbc.tokenAmount?.toString() || '0');
+                  const wsolAmount = Math.abs(wsolChange) / 1e9; // tokenAmount is in lamports
+                  
+                  // WSOL balance decreasing = SOL going out (buy)
+                  if (wsolChange < 0 && wsolAmount > 0.0001) {
+                    wsolFromBalanceChange = wsolAmount;
+                    wsolBalanceChangeDirection = 'out';
+                  }
+                  // WSOL balance increasing = SOL coming in (sell)
+                  else if (wsolChange > 0 && wsolAmount > 0.0001) {
+                    wsolFromBalanceChange = wsolAmount;
+                    wsolBalanceChangeDirection = 'in';
+                  }
+                }
+              }
+            }
+            
+            // Check WSOL (Wrapped SOL) transfers - ONLY if we didn't find a balance change
+            // tokenTransfers and tokenBalanceChanges often represent the same movement, so we should use balance change as primary
+            if (wsolFromBalanceChange === 0 && tx.tokenTransfers && Array.isArray(tx.tokenTransfers)) {
               for (const transfer of tx.tokenTransfers) {
                 const mint = transfer.mint || transfer.tokenAddress || transfer.token || '';
                 if (mint === WSOL_MINT) {
                   const fromAddr = transfer.fromUserAccount || transfer.from || '';
                   const toAddr = transfer.toUserAccount || transfer.to || '';
-                  const amount = parseFloat(transfer.tokenAmount?.toString() || '0');
-                  const wsolAmount = amount / 1e9; // WSOL has 9 decimals like SOL
+                  // tokenAmount might be in different formats - try both raw and divided by 1e9
+                  const rawAmount = parseFloat(transfer.tokenAmount?.toString() || '0');
+                  // If amount is very large (> 1e6), it's likely in lamports, divide by 1e9
+                  // If amount is small (< 1000), it might already be in SOL
+                  const wsolAmount = rawAmount > 1e6 ? rawAmount / 1e9 : rawAmount;
                   
                   // WSOL going out from wallet = SOL going out (buy)
                   if (fromAddr === walletAddress && toAddr !== walletAddress && wsolAmount > 0.0001) {
@@ -1758,25 +1836,12 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
                   }
                 }
               }
-            }
-            
-            // Also check token balance changes for WSOL
-            if (walletAccount && walletAccount.tokenBalanceChanges) {
-              for (const tbc of walletAccount.tokenBalanceChanges) {
-                const mint = tbc.mint || tbc.tokenAddress || '';
-                if (mint === WSOL_MINT) {
-                  const wsolChange = parseFloat(tbc.tokenAmount?.toString() || '0');
-                  const wsolAmount = Math.abs(wsolChange) / 1e9;
-                  
-                  // WSOL balance decreasing = SOL going out (buy)
-                  if (wsolChange < 0 && wsolAmount > 0.0001) {
-                    solOut += wsolAmount;
-                  }
-                  // WSOL balance increasing = SOL coming in (sell)
-                  else if (wsolChange > 0 && wsolAmount > 0.0001) {
-                    solIn += wsolAmount;
-                  }
-                }
+            } else if (wsolFromBalanceChange > 0) {
+              // Use the balance change (more accurate, avoids double-counting)
+              if (wsolBalanceChangeDirection === 'out') {
+                solOut += wsolFromBalanceChange;
+              } else if (wsolBalanceChangeDirection === 'in') {
+                solIn += wsolFromBalanceChange;
               }
             }
             
@@ -1840,9 +1905,11 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
               }
             } else if (currentTradeType === 'sell') {
               // For sells, use SOL coming in
-              // CRITICAL FIX: If solIn is 0 (e.g., wrapped SOL or intermediate program),
-              // use native balance change as fallback (should be positive for sells)
+              // CRITICAL FIX: solIn should already be calculated correctly (only from balance changes OR transfers, not both)
+              // But we need to make sure we're not double-counting by using solVolume as fallback
               let solForSell = solIn;
+              
+              // Only use native balance change if solIn is 0 AND it's positive (SOL coming in)
               if (solIn === 0 && walletAccount.nativeBalanceChange) {
                 const nativeChange = parseFloat(walletAccount.nativeBalanceChange.toString()) / 1e9;
                 // For sells, native balance change should be positive (SOL coming in)
@@ -1851,9 +1918,16 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
                 }
               }
               
-              // If still 0, try using the total solVolume (which might include wrapped SOL)
-              if (solForSell === 0 && solVolume > 0) {
-                solForSell = solVolume;
+              // CRITICAL: Don't use solVolume as fallback for sells - it might include WSOL that's already counted
+              // solVolume is calculated using Math.max() which might pick WSOL from transfers,
+              // but solIn should already have the correct WSOL amount from balance changes
+              // If solIn is still 0, we've already tried native balance change above
+              // Using solVolume here would risk double-counting
+              
+              // Debug logging to track down the doubling issue
+              if (solIn > 0) {
+                console.log(`[SELL DEBUG] Token: ${currentTokenMint.slice(0, 8)}, solIn: ${solIn}, solForSell: ${solForSell}, solVolume: ${solVolume}`);
+                console.log(`[SELL DEBUG] Using solIn (${solIn}) for sell, NOT using solVolume (${solVolume}) to avoid double-counting`);
               }
               
               if (solForSell > 0) {
@@ -1868,11 +1942,10 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
                   tokenSOLVolume = solForSell / walletAccount.tokenBalanceChanges.filter((tbc: any) => parseFloat(tbc.tokenAmount?.toString() || '0') < 0).length;
                 }
               } else {
-                // Last resort: divide total solVolume equally
-                const totalTokenAmounts = walletAccount.tokenBalanceChanges.reduce((sum: number, tbc: any) => {
-                  return sum + Math.abs(parseFloat(tbc.tokenAmount?.toString() || '0'));
-                }, 0);
-                tokenSOLVolume = totalTokenAmounts > 0 ? (currentTokenAmount / totalTokenAmounts) * solVolume : solVolume / walletAccount.tokenBalanceChanges.length;
+                // DO NOT use solVolume as fallback for sells - it causes double-counting!
+                // If we couldn't determine solForSell, skip this sell rather than double-count
+                console.warn(`⚠️  Sell detected but no SOL volume found for ${currentTokenMint.slice(0, 8)}, skipping to avoid double-counting`);
+                tokenSOLVolume = 0; // Will be skipped by the tokenSOLVolume > 0 check below
               }
             }
             
@@ -1880,7 +1953,8 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
             
             // Debug: Log SOL volume calculation for buys specifically
             if (currentTradeType === 'buy') {
-              console.log(`[BUY DEBUG] Token: ${currentTokenMint.slice(0, 8)}, Balance change: ${currentTokenBalanceChange}, Amount: ${currentTokenAmount}`);
+              const txSig = tx.signature?.slice(0, 16) || 'UNKNOWN';
+              console.log(`[BUY DEBUG] ${txSig}... Token: ${currentTokenMint.slice(0, 8)}, Balance change: ${currentTokenBalanceChange}, Amount: ${currentTokenAmount}`);
               console.log(`[BUY DEBUG] SOL out: ${solOut}, SOL in: ${solIn}, Total solVolume: ${solVolume}, Token SOL volume: ${tokenSOLVolume}`);
               console.log(`[BUY DEBUG] Native transfers count: ${tx.nativeTransfers?.length || 0}`);
               if (tx.nativeTransfers && tx.nativeTransfers.length > 0) {
@@ -1889,6 +1963,39 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
                   to: (t.toUserAccount || t.to || '').slice(0, 8),
                   amount: parseFloat(t.amount?.toString() || '0') / 1e9
                 })));
+              }
+              console.log(`[BUY DEBUG] Token transfers count: ${tx.tokenTransfers?.length || 0}`);
+              if (tx.tokenTransfers && tx.tokenTransfers.length > 0) {
+                const wsolTransfers = tx.tokenTransfers.filter((t: any) => {
+                  const mint = t.mint || t.tokenAddress || t.token || '';
+                  return mint === WSOL_MINT;
+                });
+                console.log(`[BUY DEBUG] WSOL transfers found: ${wsolTransfers.length}`);
+                wsolTransfers.forEach((t: any, idx: number) => {
+                  const rawAmount = parseFloat(t.tokenAmount?.toString() || '0');
+                  const wsolAmount = rawAmount > 1e6 ? rawAmount / 1e9 : rawAmount;
+                  console.log(`[BUY DEBUG] WSOL transfer ${idx + 1}:`, {
+                    from: (t.fromUserAccount || t.from || '').slice(0, 8),
+                    to: (t.toUserAccount || t.to || '').slice(0, 8),
+                    rawAmount,
+                    wsolAmount,
+                    isFromWallet: (t.fromUserAccount || t.from || '') === walletAddress
+                  });
+                });
+              }
+              // Check tokenBalanceChanges for WSOL
+              if (walletAccount && walletAccount.tokenBalanceChanges) {
+                const wsolTBC = walletAccount.tokenBalanceChanges.find((tbc: any) => {
+                  const mint = tbc.mint || tbc.tokenAddress || '';
+                  return mint === WSOL_MINT;
+                });
+                if (wsolTBC) {
+                  const wsolChange = parseFloat(wsolTBC.tokenAmount?.toString() || '0');
+                  const wsolAmount = Math.abs(wsolChange) / 1e9;
+                  console.log(`[BUY DEBUG] WSOL balance change: ${wsolChange} (${wsolAmount} SOL)`);
+                } else {
+                  console.log(`[BUY DEBUG] No WSOL balance change found in tokenBalanceChanges`);
+                }
               }
             }
             
@@ -1947,7 +2054,8 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
               tokenStats[currentTokenMint].totalReceivedSOL += tokenSOLVolume;
               tokenStats[currentTokenMint].totalTokensSold += currentTokenAmount;
               
-              console.log(`Sell: ${tokenStats[currentTokenMint].symbol} (${currentTokenMint.slice(0, 8)}) - ${currentTokenAmount.toFixed(2)} tokens for ${tokenSOLVolume.toFixed(4)} SOL`);
+              console.log(`✅ SELL: ${tokenStats[currentTokenMint].symbol} (${currentTokenMint.slice(0, 8)}) - ${currentTokenAmount.toFixed(2)} tokens for ${tokenSOLVolume.toFixed(4)} SOL`);
+              console.log(`   TX: ${tx.signature?.slice(0, 16)}... | solIn: ${solIn}, tokenSOLVolume: ${tokenSOLVolume}`);
               
               // Update position for tracking (to know if fully sold)
               if (positions[currentTokenMint] && positions[currentTokenMint].amount > 0) {
@@ -1998,13 +2106,121 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
       // Process tokenTransfers for tokens NOT already processed via tokenBalanceChanges
       if (hasTokenTransfersData) {
         // Process ALL token transfers (not just the first one)
+        // CRITICAL FIX: Calculate total SOL out/in ONCE per transaction, then distribute proportionally
         const WSOL_MINT = 'So11111111111111111111111111111111111111112';
+        
+        // Calculate total SOL movement for this transaction ONCE
+        let txTotalSolOut = 0;
+        let txTotalSolIn = 0;
+        
+        // Check native transfers
+        // CRITICAL FIX: Track max SOL amount per direction, don't sum all transfers!
+        let maxNativeSolOut = 0;
+        let maxNativeSolIn = 0;
+        if (tx.nativeTransfers && Array.isArray(tx.nativeTransfers)) {
+          for (const natTransfer of tx.nativeTransfers) {
+            const natFrom = natTransfer.fromUserAccount || natTransfer.from || '';
+            const natTo = natTransfer.toUserAccount || natTransfer.to || '';
+            const natAmount = parseFloat(natTransfer.amount?.toString() || '0') / 1e9;
+            
+            if (natFrom === walletAddress && natTo !== walletAddress && natAmount > 0.0001) {
+              maxNativeSolOut = Math.max(maxNativeSolOut, natAmount); // Use max, not sum!
+            } else if (natTo === walletAddress && natFrom !== walletAddress && natAmount > 0.0001) {
+              maxNativeSolIn = Math.max(maxNativeSolIn, natAmount); // Use max, not sum!
+            }
+          }
+        }
+        txTotalSolOut += maxNativeSolOut;
+        txTotalSolIn += maxNativeSolIn;
+        
+        // CRITICAL FIX: Check tokenBalanceChanges for WSOL FIRST - this is MORE ACCURATE!
+        // tokenBalanceChanges shows the actual NET balance change, which is what we need
+        // We check this FIRST to avoid double-counting with tokenTransfers
+        let wsolFromBalanceChange = 0;
+        let wsolBalanceChangeDirection: 'out' | 'in' | null = null;
+        if (walletAccount && walletAccount.tokenBalanceChanges) {
+          for (const tbc of walletAccount.tokenBalanceChanges) {
+            const mint = tbc.mint || tbc.tokenAddress || '';
+            if (mint === WSOL_MINT) {
+              const wsolChange = parseFloat(tbc.tokenAmount?.toString() || '0');
+              const wsolAmount = Math.abs(wsolChange) / 1e9; // tokenAmount is in lamports
+              
+              // WSOL balance decreasing = SOL going out (buy)
+              if (wsolChange < 0 && wsolAmount > 0.0001) {
+                wsolFromBalanceChange = wsolAmount;
+                wsolBalanceChangeDirection = 'out';
+              }
+              // WSOL balance increasing = SOL coming in (sell)
+              else if (wsolChange > 0 && wsolAmount > 0.0001) {
+                wsolFromBalanceChange = wsolAmount;
+                wsolBalanceChangeDirection = 'in';
+              }
+            }
+          }
+        }
+        
+        // Check WSOL transfers - ONLY if we didn't find a balance change
+        // tokenTransfers and tokenBalanceChanges often represent the same movement, so we should use balance change as primary
+        if (wsolFromBalanceChange === 0 && tx.tokenTransfers && Array.isArray(tx.tokenTransfers)) {
+          // CRITICAL FIX: Track max WSOL amount per direction, don't sum all transfers!
+          // Multiple WSOL transfers can occur in a single swap, but we only want the NET amount
+          let maxWsolOut = 0;
+          let maxWsolIn = 0;
+          
+          for (const wsolTransfer of tx.tokenTransfers) {
+            const wsolMint = wsolTransfer.mint || wsolTransfer.tokenAddress || wsolTransfer.token || '';
+            if (wsolMint === WSOL_MINT) {
+              const wsolFrom = wsolTransfer.fromUserAccount || wsolTransfer.from || '';
+              const wsolTo = wsolTransfer.toUserAccount || wsolTransfer.to || '';
+              // tokenAmount might be in different formats - try both raw and divided by 1e9
+              const rawAmount = parseFloat(wsolTransfer.tokenAmount?.toString() || '0');
+              // If amount is very large (> 1e6), it's likely in lamports, divide by 1e9
+              // If amount is small (< 1000), it might already be in SOL
+              const wsolAmount = rawAmount > 1e6 ? rawAmount / 1e9 : rawAmount;
+              
+              if (wsolFrom === walletAddress && wsolTo !== walletAddress && wsolAmount > 0.0001) {
+                maxWsolOut = Math.max(maxWsolOut, wsolAmount); // Use max, not sum!
+              } else if (wsolTo === walletAddress && wsolFrom !== walletAddress && wsolAmount > 0.0001) {
+                maxWsolIn = Math.max(maxWsolIn, wsolAmount); // Use max, not sum!
+              }
+            }
+          }
+          
+          // Add the max values (not the sum of all transfers)
+          txTotalSolOut += maxWsolOut;
+          txTotalSolIn += maxWsolIn;
+        } else if (wsolFromBalanceChange > 0) {
+          // Use the balance change (more accurate, avoids double-counting)
+          if (wsolBalanceChangeDirection === 'out') {
+            txTotalSolOut += wsolFromBalanceChange;
+          } else if (wsolBalanceChangeDirection === 'in') {
+            txTotalSolIn += wsolFromBalanceChange;
+          }
+        }
+        
+        // Collect all valid token transfers first
+        const validTransfers: Array<{
+          mint: string;
+          amount: number;
+          tradeType: 'buy' | 'sell';
+          fromAddr: string;
+          toAddr: string;
+        }> = [];
         
         for (const transfer of tx.tokenTransfers) {
           const transferMint = transfer.mint || transfer.tokenAddress || transfer.token || '';
           // Skip WSOL - we handle it separately for SOL volume
           // Skip tokens already processed via tokenBalanceChanges
-          if (!transferMint || transferMint === WSOL_MINT || processedTokens.has(transferMint)) continue;
+          if (!transferMint || transferMint === WSOL_MINT || processedTokens.has(transferMint)) {
+            if (transferMint === WSOL_MINT) {
+              // WSOL is handled separately, skip
+            } else if (processedTokens.has(transferMint)) {
+              // Already processed via tokenBalanceChanges, skip
+            } else if (!transferMint) {
+              console.warn(`[TX DEBUG] ${txSig}... tokenTransfer with no mint address`);
+            }
+            continue;
+          }
           
           const fromAddr = transfer.fromUserAccount || transfer.from || '';
           const toAddr = transfer.toUserAccount || transfer.to || '';
@@ -2014,87 +2230,172 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
           let transferTradeType: 'buy' | 'sell' | null = null;
           if (toAddr === walletAddress && fromAddr !== walletAddress && transferAmount > 0) {
             transferTradeType = 'buy'; // Token coming in = buy
+            console.log(`[BUY DETECTED] ${txSig}... Token ${transferMint.slice(0, 8)} coming TO wallet (${transferAmount.toFixed(2)} tokens)`);
           } else if (fromAddr === walletAddress && toAddr !== walletAddress && transferAmount > 0) {
             transferTradeType = 'sell'; // Token going out = sell
           }
           
           if (transferTradeType && transferAmount > 0) {
-            processedCount++;
-            
-            if (processedCount % 50 === 0) {
-              console.log(`Processed ${processedCount} trades...`);
+            validTransfers.push({
+              mint: transferMint,
+              amount: transferAmount,
+              tradeType: transferTradeType,
+              fromAddr,
+              toAddr
+            });
+          } else if (transferAmount > 0) {
+            // Log why this transfer wasn't added
+            console.warn(`[TX DEBUG] ${txSig}... Token transfer not added:`, {
+              mint: transferMint.slice(0, 8),
+              amount: transferAmount,
+              fromAddr: fromAddr.slice(0, 8),
+              toAddr: toAddr.slice(0, 8),
+              walletAddress: walletAddress.slice(0, 8),
+              isToWallet: toAddr === walletAddress,
+              isFromWallet: fromAddr === walletAddress
+            });
+          }
+        }
+        
+        // Now process transfers and distribute SOL proportionally
+        // If multiple tokens, distribute SOL based on token amounts (rough approximation)
+        // For more accuracy, we'd need token prices, but this is better than double-counting
+        const totalTokenAmount = validTransfers.reduce((sum, t) => sum + t.amount, 0);
+        
+        for (const transfer of validTransfers) {
+          processedCount++;
+          
+          if (processedCount % 50 === 0) {
+            console.log(`Processed ${processedCount} trades...`);
+          }
+          
+          // Distribute SOL proportionally if multiple tokens, otherwise use full amount
+          let transferTokenSOLVolume = 0;
+          if (transfer.tradeType === 'buy') {
+            if (validTransfers.length === 1) {
+              // Single token - use all SOL out
+              transferTokenSOLVolume = txTotalSolOut > 0 ? txTotalSolOut : (solVolume > 0 ? solVolume : 0);
+            } else {
+              // Multiple tokens - distribute proportionally
+              const proportion = totalTokenAmount > 0 ? transfer.amount / totalTokenAmount : 1 / validTransfers.length;
+              transferTokenSOLVolume = txTotalSolOut > 0 ? txTotalSolOut * proportion : (solVolume > 0 ? solVolume * proportion : 0);
             }
             
-            // Calculate SOL volume for this transfer
-            // Recalculate solOut/solIn for this specific transfer
-            let transferSolOut = 0;
-            let transferSolIn = 0;
-            
-            // Check native transfers
-            if (tx.nativeTransfers && Array.isArray(tx.nativeTransfers)) {
-              for (const natTransfer of tx.nativeTransfers) {
-                const natFrom = natTransfer.fromUserAccount || natTransfer.from || '';
-                const natTo = natTransfer.toUserAccount || natTransfer.to || '';
-                const natAmount = parseFloat(natTransfer.amount?.toString() || '0') / 1e9;
-                
-                if (natFrom === walletAddress && natTo !== walletAddress && natAmount > 0.0001) {
-                  transferSolOut += natAmount;
-                } else if (natTo === walletAddress && natFrom !== walletAddress && natAmount > 0.0001) {
-                  transferSolIn += natAmount;
-                }
-              }
-            }
-            
-            // Check WSOL transfers
-            if (tx.tokenTransfers && Array.isArray(tx.tokenTransfers)) {
-              for (const wsolTransfer of tx.tokenTransfers) {
-                const wsolMint = wsolTransfer.mint || wsolTransfer.tokenAddress || wsolTransfer.token || '';
-                if (wsolMint === WSOL_MINT) {
-                  const wsolFrom = wsolTransfer.fromUserAccount || wsolTransfer.from || '';
-                  const wsolTo = wsolTransfer.toUserAccount || wsolTransfer.to || '';
-                  const wsolAmount = parseFloat(wsolTransfer.tokenAmount?.toString() || '0') / 1e9;
-                  
-                  if (wsolFrom === walletAddress && wsolTo !== walletAddress && wsolAmount > 0.0001) {
-                    transferSolOut += wsolAmount;
-                  } else if (wsolTo === walletAddress && wsolFrom !== walletAddress && wsolAmount > 0.0001) {
-                    transferSolIn += wsolAmount;
-                  }
-                }
-              }
-            }
-            
-            // Use appropriate SOL amount based on trade type
-            let transferTokenSOLVolume = 0;
-            if (transferTradeType === 'buy') {
-              transferTokenSOLVolume = transferSolOut > 0 ? transferSolOut : (solVolume > 0 ? solVolume : 0);
-              // If still 0, use native balance change
-              if (transferTokenSOLVolume === 0 && walletAccount?.nativeBalanceChange) {
+            // CRITICAL: If still 0, we MUST track the buy - tokens don't appear from nowhere
+            // Use native balance change or estimate minimum
+            if (transferTokenSOLVolume === 0) {
+              if (walletAccount?.nativeBalanceChange) {
                 const nativeChange = parseFloat(walletAccount.nativeBalanceChange.toString()) / 1e9;
                 if (nativeChange < 0) {
-                  transferTokenSOLVolume = Math.abs(nativeChange);
+                  transferTokenSOLVolume = Math.abs(nativeChange) / validTransfers.length;
+                } else {
+                  // Even if positive, if tokens came in, SOL must have gone out
+                  // Use absolute value as estimate
+                  transferTokenSOLVolume = Math.abs(nativeChange) / validTransfers.length;
                 }
               }
-            } else if (transferTradeType === 'sell') {
-              transferTokenSOLVolume = transferSolIn > 0 ? transferSolIn : (solVolume > 0 ? solVolume : 0);
-              // If still 0, use native balance change
-              if (transferTokenSOLVolume === 0 && walletAccount?.nativeBalanceChange) {
-                const nativeChange = parseFloat(walletAccount.nativeBalanceChange.toString()) / 1e9;
-                if (nativeChange > 0) {
-                  transferTokenSOLVolume = nativeChange;
-                }
+              // Last resort: use transaction fee as minimum estimate
+              if (transferTokenSOLVolume === 0 || transferTokenSOLVolume < 0.0001) {
+                const fee = parseFloat(tx.fee?.toString() || '0') / 1e9;
+                transferTokenSOLVolume = Math.max(fee * 10, 0.01); // Estimate at least 0.01 SOL for any trade
+                console.warn(`⚠️  Buy detected (tokenTransfers) but no SOL volume found for ${transfer.mint.slice(0, 8)}, using estimate: ${transferTokenSOLVolume} SOL`);
+                console.warn(`   Transaction: ${tx.signature?.slice(0, 16)}...`);
+              }
+            }
+          } else if (transfer.tradeType === 'sell') {
+            // CRITICAL: Use txTotalSolIn which is calculated ONCE per transaction and avoids double-counting
+            // Don't use solVolume as fallback - it might include WSOL that's already counted in txTotalSolIn
+            if (validTransfers.length === 1) {
+              // Single token - use all SOL in
+              transferTokenSOLVolume = txTotalSolIn > 0 ? txTotalSolIn : 0;
+            } else {
+              // Multiple tokens - distribute proportionally
+              const proportion = totalTokenAmount > 0 ? transfer.amount / totalTokenAmount : 1 / validTransfers.length;
+              transferTokenSOLVolume = txTotalSolIn > 0 ? txTotalSolIn * proportion : 0;
+            }
+            
+            // Fallback: use native balance change if still 0 (but NOT solVolume to avoid double-counting)
+            if (transferTokenSOLVolume === 0 && walletAccount?.nativeBalanceChange) {
+              const nativeChange = parseFloat(walletAccount.nativeBalanceChange.toString()) / 1e9;
+              if (nativeChange > 0) {
+                transferTokenSOLVolume = nativeChange / validTransfers.length;
               }
             }
             
-            if (transferTokenSOLVolume > 0) {
-              totalVolumeSOL += transferTokenSOLVolume;
-              const transferTradeValueUSD = transferTokenSOLVolume * 150;
+            // Debug logging
+            if (txTotalSolIn > 0) {
+              console.log(`[SELL DEBUG] Transfer: ${transfer.mint.slice(0, 8)}, txTotalSolIn: ${txTotalSolIn}, transferTokenSOLVolume: ${transferTokenSOLVolume}, solVolume: ${solVolume}`);
+            }
+          }
+          
+          if (transferTokenSOLVolume > 0) {
+            // Only count volume once per transaction (not per token)
+            if (validTransfers.indexOf(transfer) === 0) {
+              // Only count volume for first transfer to avoid double-counting
+              totalVolumeSOL += (transfer.tradeType === 'buy' ? txTotalSolOut : txTotalSolIn) || solVolume || 0;
+              const transferTradeValueUSD = ((transfer.tradeType === 'buy' ? txTotalSolOut : txTotalSolIn) || solVolume || 0) * 150;
               totalVolumeUSD += transferTradeValueUSD;
+            }
+            
+            // Initialize token stats
+            if (!tokenStats[transfer.mint]) {
+              const symbol = tokenSymbolCache[transfer.mint] || transfer.mint.slice(0, 8) + '...';
+              const imageUrl = tokenImageCache[transfer.mint] || null;
+              tokenStats[transfer.mint] = {
+                symbol: symbol,
+                imageUrl: imageUrl,
+                totalSpentSOL: 0,
+                totalReceivedSOL: 0,
+                totalTokensSold: 0,
+                lastTradeDate: timestamp
+              };
+            }
+            tokenStats[transfer.mint].lastTradeDate = timestamp;
+            
+            if (transfer.tradeType === 'buy') {
+              if (!positions[transfer.mint]) {
+                positions[transfer.mint] = { amount: 0, totalCostSOL: 0 };
+              }
+              const pos = positions[transfer.mint];
+              pos.amount += transfer.amount;
+              pos.totalCostSOL += transferTokenSOLVolume;
+              tokenStats[transfer.mint].totalSpentSOL += transferTokenSOLVolume;
+              
+              console.log(`Buy (from tokenTransfers): ${tokenStats[transfer.mint].symbol} (${transfer.mint.slice(0, 8)}) - ${transfer.amount.toFixed(2)} tokens for ${transferTokenSOLVolume.toFixed(4)} SOL`);
+            } else if (transfer.tradeType === 'sell') {
+              tokenStats[transfer.mint].totalReceivedSOL += transferTokenSOLVolume;
+              tokenStats[transfer.mint].totalTokensSold += transfer.amount;
+              
+              console.log(`Sell (from tokenTransfers): ${tokenStats[transfer.mint].symbol} (${transfer.mint.slice(0, 8)}) - ${transfer.amount.toFixed(2)} tokens for ${transferTokenSOLVolume.toFixed(4)} SOL`);
+              
+              // Update position
+              if (positions[transfer.mint] && positions[transfer.mint].amount > 0) {
+                const pos = positions[transfer.mint];
+                const tokensToSell = Math.min(transfer.amount, pos.amount);
+                const costBasisSOL = pos.amount > 0 ? (tokensToSell / pos.amount) * pos.totalCostSOL : 0;
+                pos.amount -= tokensToSell;
+                pos.totalCostSOL -= costBasisSOL;
+                if (pos.amount < 0.0001) pos.amount = 0;
+                if (pos.totalCostSOL < 0.0001) pos.totalCostSOL = 0;
+                if (pos.amount <= 0) delete positions[transfer.mint];
+              }
+            }
+            
+            tradesByDate[date].pnl += 0;
+          } else {
+            // Even if SOL volume is 0, we should still track the trade if it's a buy
+            // Use minimum estimate to ensure buy is recorded
+            if (transfer.tradeType === 'buy') {
+              const fee = parseFloat(tx.fee?.toString() || '0') / 1e9;
+              const estimatedSOL = Math.max(fee * 10, 0.01);
+              console.warn(`⚠️  Buy detected but no SOL volume for ${transfer.mint.slice(0, 8)}, using minimum estimate: ${estimatedSOL} SOL`);
+              console.warn(`   Transaction: ${tx.signature?.slice(0, 16)}...`);
               
               // Initialize token stats
-              if (!tokenStats[transferMint]) {
-                const symbol = tokenSymbolCache[transferMint] || transferMint.slice(0, 8) + '...';
-                const imageUrl = tokenImageCache[transferMint] || null;
-                tokenStats[transferMint] = {
+              if (!tokenStats[transfer.mint]) {
+                const symbol = tokenSymbolCache[transfer.mint] || transfer.mint.slice(0, 8) + '...';
+                const imageUrl = tokenImageCache[transfer.mint] || null;
+                tokenStats[transfer.mint] = {
                   symbol: symbol,
                   imageUrl: imageUrl,
                   totalSpentSOL: 0,
@@ -2103,40 +2404,18 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
                   lastTradeDate: timestamp
                 };
               }
-              tokenStats[transferMint].lastTradeDate = timestamp;
               
-              if (transferTradeType === 'buy') {
-                if (!positions[transferMint]) {
-                  positions[transferMint] = { amount: 0, totalCostSOL: 0 };
-                }
-                const pos = positions[transferMint];
-                pos.amount += transferAmount;
-                pos.totalCostSOL += transferTokenSOLVolume;
-                tokenStats[transferMint].totalSpentSOL += transferTokenSOLVolume;
-                
-                console.log(`Buy (from tokenTransfers): ${tokenStats[transferMint].symbol} (${transferMint.slice(0, 8)}) - ${transferAmount.toFixed(2)} tokens for ${transferTokenSOLVolume.toFixed(4)} SOL`);
-              } else if (transferTradeType === 'sell') {
-                tokenStats[transferMint].totalReceivedSOL += transferTokenSOLVolume;
-                tokenStats[transferMint].totalTokensSold += transferAmount;
-                
-                console.log(`Sell (from tokenTransfers): ${tokenStats[transferMint].symbol} (${transferMint.slice(0, 8)}) - ${transferAmount.toFixed(2)} tokens for ${transferTokenSOLVolume.toFixed(4)} SOL`);
-                
-                // Update position
-                if (positions[transferMint] && positions[transferMint].amount > 0) {
-                  const pos = positions[transferMint];
-                  const tokensToSell = Math.min(transferAmount, pos.amount);
-                  const costBasisSOL = pos.amount > 0 ? (tokensToSell / pos.amount) * pos.totalCostSOL : 0;
-                  pos.amount -= tokensToSell;
-                  pos.totalCostSOL -= costBasisSOL;
-                  if (pos.amount < 0.0001) pos.amount = 0;
-                  if (pos.totalCostSOL < 0.0001) pos.totalCostSOL = 0;
-                  if (pos.amount <= 0) delete positions[transferMint];
-                }
+              if (!positions[transfer.mint]) {
+                positions[transfer.mint] = { amount: 0, totalCostSOL: 0 };
               }
+              const pos = positions[transfer.mint];
+              pos.amount += transfer.amount;
+              pos.totalCostSOL += estimatedSOL;
+              tokenStats[transfer.mint].totalSpentSOL += estimatedSOL;
               
-              tradesByDate[date].pnl += 0;
+              console.log(`Buy (from tokenTransfers, estimated): ${tokenStats[transfer.mint].symbol} (${transfer.mint.slice(0, 8)}) - ${transfer.amount.toFixed(2)} tokens for ${estimatedSOL.toFixed(4)} SOL (ESTIMATED)`);
             } else {
-              console.warn(`⚠️  Token transfer detected but no SOL volume for ${transferMint.slice(0, 8)} (${transferTradeType})`);
+              console.warn(`⚠️  Token transfer detected but no SOL volume for ${transfer.mint.slice(0, 8)} (${transfer.tradeType})`);
             }
           }
         }
@@ -2252,8 +2531,25 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
   // Count total trades from tradesByDate (more accurate)
   const totalTrades = Object.values(tradesByDate).reduce((sum, day) => sum + day.count, 0);
   
+  // Define SOL price constant BEFORE it's used in logging
+  const SOL_PRICE_USD = 150; // Approximate SOL price for USD conversion
+  
   console.log(`\n=== Processing Token Stats for PNL Calculation ===`);
   console.log(`Total unique tokens tracked: ${Object.keys(tokenStats).length}`);
+  console.log(`Total volume tracked: ${totalVolumeSOL.toFixed(4)} SOL`);
+  
+  // Calculate total spent/received across all tokens for verification
+  let totalSpentAllTokens = 0;
+  let totalReceivedAllTokens = 0;
+  Object.values(tokenStats).forEach(stats => {
+    totalSpentAllTokens += stats.totalSpentSOL;
+    totalReceivedAllTokens += stats.totalReceivedSOL;
+  });
+  console.log(`Total SOL spent (all tokens): ${totalSpentAllTokens.toFixed(4)} SOL`);
+  console.log(`Total SOL received (all tokens): ${totalReceivedAllTokens.toFixed(4)} SOL`);
+  const netPnLSOL = totalReceivedAllTokens - totalSpentAllTokens;
+  console.log(`Net PNL (before filtering): ${netPnLSOL.toFixed(4)} SOL ($${(netPnLSOL * SOL_PRICE_USD).toFixed(2)} USD)`);
+  
   console.log(`Sample token stats:`, Object.entries(tokenStats).slice(0, 10).map(([addr, stats]) => ({
     address: addr.slice(0, 8),
     symbol: stats.symbol,
@@ -2269,7 +2565,6 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
   
   // Filter out stablecoins from wins/losses
   const stablecoins = ['USDC', 'USDT', 'USD', 'BUSD', 'DAI', 'FIDA'];
-  const SOL_PRICE_USD = 150; // Approximate SOL price for USD conversion
   
   let calculatedTotalPnL = 0;
   
@@ -2327,29 +2622,43 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
   });
   console.log(`===========================\n`);
   
-  const totalPnL = calculatedTotalPnL;
+  // CRITICAL: totalPnL must be in USD (already converted above)
+  const totalPnL = calculatedTotalPnL; // This is already in USD from tokenPnLUSD calculations
   const sortedWins = wins.sort((a, b) => b.profit - a.profit).slice(0, 5);
   const sortedLosses = losses.sort((a, b) => a.loss - b.loss).slice(0, 5);
 
   const biggestTradingDay = Object.entries(tradesByDate)
     .sort(([, a], [, b]) => b.count - a.count)[0] || ['Unknown', { count: 0, pnl: 0 }];
 
-  const highestPnLDay = Object.entries(tradesByDate)
-    .sort(([, a], [, b]) => b.pnl - a.pnl)[0] || ['Unknown', { count: 0, pnl: 0 }];
+  // Calculate highest PnL day from wins/losses by date (already in USD)
+  const pnlByDate: Record<string, number> = {};
+  [...wins, ...losses].forEach(entry => {
+    const date = entry.date instanceof Date ? entry.date.toLocaleDateString() : new Date(entry.date).toLocaleDateString();
+    const pnl = 'profit' in entry ? entry.profit : entry.loss;
+    pnlByDate[date] = (pnlByDate[date] || 0) + pnl;
+  });
+  
+  const highestPnLDayEntry = Object.entries(pnlByDate)
+    .sort(([, a], [, b]) => b - a)[0] || ['Unknown', 0];
 
   // Log trades by date for debugging
   const tradesByDateArray = Object.entries(tradesByDate).sort(([, a], [, b]) => b.count - a.count);
-  console.log(`Processed ${totalTrades} trades, ${totalVolumeSOL.toFixed(2)} SOL volume ($${totalVolumeUSD.toFixed(2)}), $${totalPnL.toFixed(2)} PNL`);
+  console.log(`\n=== FINAL PNL SUMMARY (ALL VALUES IN USD) ===`);
+  console.log(`Total PNL: $${totalPnL.toFixed(2)} USD (calculated from ${Object.keys(tokenStats).length} tokens)`);
+  console.log(`Total PNL in SOL: ${(totalPnL / SOL_PRICE_USD).toFixed(4)} SOL (for reference only)`);
+  console.log(`Processed ${totalTrades} trades, ${totalVolumeSOL.toFixed(2)} SOL volume ($${totalVolumeUSD.toFixed(2)} USD)`);
   console.log(`Top trading days:`, tradesByDateArray.slice(0, 5).map(([date, data]) => `${date}: ${data.count} trades`));
   console.log(`Wins: ${wins.length}, Losses: ${losses.length}`);
   if (sortedWins.length > 0) {
-    console.log(`Top wins:`, sortedWins.map(w => `${w.coin}: $${w.profit.toFixed(2)}`));
+    console.log(`Top wins:`, sortedWins.map(w => `${w.coin}: $${w.profit.toFixed(2)} USD`));
   }
   if (sortedLosses.length > 0) {
-    console.log(`Top losses:`, sortedLosses.map(l => `${l.coin}: $${l.loss.toFixed(2)}`));
+    console.log(`Top losses:`, sortedLosses.map(l => `${l.coin}: $${l.loss.toFixed(2)} USD`));
   } else {
     console.log('No losses calculated - might need sells to calculate PNL');
   }
+  console.log(`Highest PnL day: ${highestPnLDayEntry[0]} with $${highestPnLDayEntry[1].toFixed(2)} USD`);
+  console.log(`=============================================\n`);
 
   return {
     totalTrades,
@@ -2363,8 +2672,8 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
       trades: biggestTradingDay[1].count
     },
     highestPnLDay: {
-      date: highestPnLDay[0],
-      pnl: highestPnLDay[1].pnl
+      date: highestPnLDayEntry[0],
+      pnl: highestPnLDayEntry[1] // Already in USD from wins/losses
     }
   };
 }
@@ -2637,6 +2946,83 @@ function aggregateEVMData(
 }
 
 /**
+ * Compare our PNL calculation with Cielo's calculation for debugging
+ */
+async function compareWithCielo(walletAddress: string): Promise<void> {
+  if (!CIELO_API_KEY) {
+    console.warn('⚠️  Cannot compare with Cielo - API key not configured');
+    return;
+  }
+
+  try {
+    console.log('\n🔍 === COMPARING WITH CIELO ===');
+    console.log(`Wallet: ${walletAddress}`);
+    
+    // Fetch from Cielo
+    const cieloTransactions = await fetchCieloTransactions(walletAddress, 'solana');
+    console.log(`Cielo returned ${cieloTransactions.length} transactions`);
+    
+    if (cieloTransactions.length === 0) {
+      console.warn('⚠️  Cielo returned no transactions - cannot compare');
+      return;
+    }
+    
+    // Process with Cielo's method
+    const cieloData = await processCieloTransactions(cieloTransactions, walletAddress);
+    console.log(`\n📊 CIELO RESULTS:`);
+    console.log(`  Total PNL: $${cieloData.totalPnL?.toFixed(2) || 0}`);
+    console.log(`  Total Volume: ${cieloData.totalVolume?.toFixed(4) || 0} SOL`);
+    console.log(`  Total Trades: ${cieloData.totalTrades || 0}`);
+    console.log(`  Wins: ${cieloData.biggestWins?.length || 0}, Losses: ${cieloData.biggestLosses?.length || 0}`);
+    
+    // Fetch from Helius and process with our method
+    if (!HELIUS_API_KEY) {
+      console.warn('⚠️  Cannot fetch from Helius - API key not configured');
+      return;
+    }
+    
+    console.log(`\n📊 FETCHING FROM HELIUS FOR COMPARISON...`);
+    const heliusTransactions = await fetchHeliusTransactions(walletAddress);
+    console.log(`Helius returned ${heliusTransactions.length} transactions`);
+    
+    if (heliusTransactions.length === 0) {
+      console.warn('⚠️  Helius returned no transactions - cannot compare');
+      return;
+    }
+    
+    // Process with our method
+    const ourData = await processHeliusTransactionsWithPrices(heliusTransactions, walletAddress);
+    console.log(`\n📊 OUR RESULTS:`);
+    console.log(`  Total PNL: $${ourData.totalPnL?.toFixed(2) || 0}`);
+    console.log(`  Total Volume: ${ourData.totalVolume?.toFixed(4) || 0} SOL`);
+    console.log(`  Total Trades: ${ourData.totalTrades || 0}`);
+    console.log(`  Wins: ${ourData.biggestWins?.length || 0}, Losses: ${ourData.biggestLosses?.length || 0}`);
+    
+    // Compare
+    console.log(`\n🔍 === COMPARISON ===`);
+    const pnlDiff = (ourData.totalPnL || 0) - (cieloData.totalPnL || 0);
+    const pnlDiffPercent = cieloData.totalPnL ? (pnlDiff / Math.abs(cieloData.totalPnL)) * 100 : 0;
+    console.log(`  PNL Difference: $${pnlDiff.toFixed(2)} (${pnlDiffPercent > 0 ? '+' : ''}${pnlDiffPercent.toFixed(2)}%)`);
+    console.log(`  Volume Difference: ${((ourData.totalVolume || 0) - (cieloData.totalVolume || 0)).toFixed(4)} SOL`);
+    console.log(`  Trades Difference: ${(ourData.totalTrades || 0) - (cieloData.totalTrades || 0)}`);
+    
+    // Compare top wins/losses
+    console.log(`\n📈 TOP WINS COMPARISON:`);
+    console.log(`  Cielo Top 5:`, cieloData.biggestWins?.slice(0, 5).map(w => `${w.coin}: $${w.profit.toFixed(2)}`).join(', ') || 'None');
+    console.log(`  Our Top 5:`, ourData.biggestWins?.slice(0, 5).map(w => `${w.coin}: $${w.profit.toFixed(2)}`).join(', ') || 'None');
+    
+    console.log(`\n📉 TOP LOSSES COMPARISON:`);
+    console.log(`  Cielo Top 5:`, cieloData.biggestLosses?.slice(0, 5).map(l => `${l.coin}: $${l.loss.toFixed(2)}`).join(', ') || 'None');
+    console.log(`  Our Top 5:`, ourData.biggestLosses?.slice(0, 5).map(l => `${l.coin}: $${l.loss.toFixed(2)}`).join(', ') || 'None');
+    
+    console.log(`\n=== END COMPARISON ===\n`);
+    
+  } catch (error) {
+    console.error('❌ Error comparing with Cielo:', error);
+  }
+}
+
+/**
  * Fetch trading data for a wallet
  * For EVM: Fetches from Ethereum, BNB, and Base chains and aggregates
  */
@@ -2715,6 +3101,11 @@ export async function fetchTradingData(
       } else {
         // Use async version with DexScreener/CoinGecko for accurate PNL calculation
         processedData = await processHeliusTransactionsWithPrices(transactions, walletAddress);
+        
+        // If this is a specific wallet for debugging, compare with Cielo
+        if (walletAddress === '6AY3Uf7DpDVYc4pYp3zvSCbynniHTBefbh8Q4CabCAm3' && CIELO_API_KEY) {
+          await compareWithCielo(walletAddress);
+        }
       }
 
       // Validate that we got some data

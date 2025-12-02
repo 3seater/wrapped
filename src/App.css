@@ -207,7 +207,8 @@ body {
 }
 
 .trades-made-slide .slide-content,
-.total-volume-slide .slide-content {
+.total-volume-slide .slide-content,
+.total-pnl-slide .slide-content {
   text-align: center;
 }
 
@@ -355,6 +356,10 @@ body {
 
 .trade-count, .volume-display, .pnl-display {
   margin: 2rem 0;
+  text-align: center;
+}
+
+.total-pnl-slide .slide-header {
   text-align: center;
 }
 
