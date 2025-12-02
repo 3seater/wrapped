@@ -67,9 +67,28 @@ export const Slideshow: React.FC<SlideshowProps> = ({ data, slides, onRestart })
     
     setIsCapturing(true);
     
+    // Track original styles for restoration
+    const originalStyles: Array<{ element: HTMLElement; animation: string; opacity: string }> = [];
+    
     try {
-      // Wait for animations/transitions to complete (slideIn animation is 0.5s + buffer)
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Temporarily remove animation and force full opacity on all elements
+      const slideElements = slideRef.current.querySelectorAll('.slide, .detail, .slide-subtitle, .highlight-value, .loss-date, .win-date');
+      
+      slideElements.forEach(el => {
+        const htmlEl = el as HTMLElement;
+        // Store original styles
+        originalStyles.push({
+          element: htmlEl,
+          animation: htmlEl.style.animation,
+          opacity: htmlEl.style.opacity
+        });
+        // Force no animation and full opacity
+        htmlEl.style.animation = 'none';
+        htmlEl.style.opacity = '1';
+      });
+      
+      // Wait a moment for styles to apply
+      await new Promise(resolve => setTimeout(resolve, 100));
       
       // Capture the slide container with proper settings
       const canvas = await html2canvas(slideRef.current, {
@@ -122,24 +141,30 @@ export const Slideshow: React.FC<SlideshowProps> = ({ data, slides, onRestart })
         
         switch (currentSlide.id) {
           case 'trades-made':
-            generatedTweetText = `I made ${data.totalTrades.toLocaleString()} trades this year! 📊 #CryptoWrapped`;
+            generatedTweetText = `I made ${data.totalTrades.toLocaleString()} trades this year!\n\nPowered by @trencheswrapped`;
             break;
           case 'total-volume':
-            generatedTweetText = `Total trading volume: ${data.totalVolume.toLocaleString()} ${data.currency}! 💰 #CryptoWrapped`;
+            generatedTweetText = `Total trading volume: ${data.totalVolume.toLocaleString()} ${data.currency}!\n\nPowered by @trencheswrapped`;
             break;
           case 'biggest-wins':
-            generatedTweetText = `My biggest win: ${data.biggestWins[0]?.coin || 'N/A'} 🚀 #CryptoWrapped`;
+            generatedTweetText = `My biggest win: ${data.biggestWins[0]?.coin || 'N/A'}\n\nPowered by @trencheswrapped`;
             break;
           case 'biggest-losses':
-            generatedTweetText = `Lessons learned from my trades 📚 #CryptoWrapped`;
+            generatedTweetText = `Lessons learned from my trades\n\nPowered by @trencheswrapped`;
             break;
           case 'total-pnl':
             const pnlSign = data.totalPnL >= 0 ? '+' : '';
-            generatedTweetText = `My 2024 Crypto Wrapped: ${pnlSign}$${Math.abs(data.totalPnL).toLocaleString()} PnL 🎯 #CryptoWrapped`;
+            generatedTweetText = `My 2024 Crypto Wrapped: ${pnlSign}$${Math.abs(data.totalPnL).toLocaleString()} PnL\n\nPowered by @trencheswrapped`;
             break;
           default:
-            generatedTweetText = `Check out my Crypto Wrapped! #CryptoWrapped`;
+            generatedTweetText = `Check out my Crypto Wrapped!\n\nPowered by @trencheswrapped`;
         }
+        
+        // Restore original styles
+        originalStyles.forEach(({ element, animation, opacity }) => {
+          element.style.animation = animation;
+          element.style.opacity = opacity;
+        });
         
         // Store image and text, show modal
         setCapturedImage(dataUrl);
@@ -154,6 +179,12 @@ export const Slideshow: React.FC<SlideshowProps> = ({ data, slides, onRestart })
       console.error('Error capturing slide:', error);
       alert('Failed to capture slide. Please try again.');
       setIsCapturing(false);
+      
+      // Restore original styles on error too
+      originalStyles.forEach(({ element, animation, opacity }) => {
+        element.style.animation = animation;
+        element.style.opacity = opacity;
+      });
     }
   };
 
