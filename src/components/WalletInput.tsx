@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import floralBg from '../assets/background/Floral.svg';
 
 interface WalletInputProps {
   onWalletSubmit: (wallet: string, network: 'solana' | 'evm') => void;
@@ -23,9 +24,15 @@ export const WalletInput: React.FC<WalletInputProps> = ({ onWalletSubmit }) => {
 
   return (
     <div className="wallet-input-container">
+      <div 
+        className="wallet-input-bg-decoration"
+        style={{
+          backgroundImage: `url(${floralBg})`
+        }}
+      />
       <div className="wallet-input-content">
-        <h1 className="title">Trenches Wrapped</h1>
-        <p className="subtitle">Your 2024 Trading Recap</p>
+        <h1 className="wallet-title">Trenches Wrapped</h1>
+        <p className="wallet-subtitle">Your 2024 Trading Recap</p>
 
         <form onSubmit={handleSubmit} className="wallet-form">
           <div className="network-selector">
@@ -50,7 +57,7 @@ export const WalletInput: React.FC<WalletInputProps> = ({ onWalletSubmit }) => {
               type="text"
               value={walletAddress}
               onChange={(e) => setWalletAddress(e.target.value)}
-              placeholder={network === 'evm' ? 'Enter your EVM wallet address (ETH/BNB/Base)' : 'Enter your Solana wallet address'}
+              placeholder={network === 'evm' ? 'Enter your EVM wallet address' : 'Enter your Solana wallet address'}
               className="wallet-input"
               disabled={isLoading}
             />

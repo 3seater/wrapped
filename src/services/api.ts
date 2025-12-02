@@ -196,7 +196,6 @@ async function fetchCieloTransactions(
       // Check for pagination token/cursor in response
       // Cielo might return a "next" or "cursor" field for pagination
       // Reset startingPoint for this page
-      const previousStartingPoint = startingPoint;
       startingPoint = undefined;
       
       if (data.data.next || data.data.cursor || data.data.starting_point) {
@@ -513,8 +512,10 @@ async function getHistoricalTokenPrice(contractAddress: string, timestamp: numbe
 
 /**
  * Get token price (current or historical)
+ * @deprecated Not currently used
  */
-async function getTokenPrice(tokenId: string, timestamp?: number): Promise<number> {
+// @ts-expect-error - Unused function, kept for future use
+async function _getTokenPrice(tokenId: string, timestamp?: number): Promise<number> {
   try {
     if (timestamp) {
       // Try historical price first
@@ -858,7 +859,7 @@ async function processCieloTransactions(transactions: any[], walletAddress: stri
             chain: 'solana',
             imageUrl: stats.imageUrl || undefined,
             mintAddress: tokenAddress
-          });
+          } as typeof wins[0]);
         } else if (tokenPnL < 0) {
           losses.push({
             coin: stats.symbol,
@@ -867,7 +868,7 @@ async function processCieloTransactions(transactions: any[], walletAddress: stri
             chain: 'solana',
             imageUrl: stats.imageUrl || undefined,
             mintAddress: tokenAddress
-          });
+          } as typeof losses[0]);
         }
         // Note: If tokenPnL === 0, we don't add to wins/losses but still count it in totalPnL above
       }
@@ -1144,20 +1145,9 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
     try {
       // Pump.fun uses a specific image URL pattern
       // This is a best guess - Pump.fun doesn't have a public API
-      const pumpImageUrl = `https://pump.fun/_next/image?url=${encodeURIComponent(`https://pump.fun/${tokenMint}`)}&w=256&q=75`;
-      // We'll return this as a potential URL, but it might not work
-      // Better to rely on Helius and DexScreener
-    } catch (error) {
-      // Ignore
-    }
-    
-    // Try Pump.fun image format (many memecoins are on Pump.fun)
-    // Pump.fun uses a specific image URL format
-    try {
-      const pumpFunUrl = `https://pump.fun/${tokenMint}`;
       // Note: Pump.fun doesn't have a public API, but we can try their CDN
-      const pumpImageUrl = `https://pump.fun/_next/image?url=${encodeURIComponent(`https://pump.fun/${tokenMint}`)}&w=256&q=75`;
       // We'll skip this for now as it requires actual page scraping
+      // Better to rely on Helius and DexScreener
     } catch (error) {
       // Ignore
     }
@@ -1817,7 +1807,7 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
                 }
               } else {
                 // Last resort: divide total solVolume equally
-                const totalTokenAmounts = walletAccount.tokenBalanceChanges.reduce((sum, tbc) => {
+                const totalTokenAmounts = walletAccount.tokenBalanceChanges.reduce((sum: number, tbc: any) => {
                   return sum + Math.abs(parseFloat(tbc.tokenAmount?.toString() || '0'));
                 }, 0);
                 tokenSOLVolume = totalTokenAmounts > 0 ? (currentTokenAmount / totalTokenAmounts) * solVolume : solVolume / walletAccount.tokenBalanceChanges.length;
@@ -1853,7 +1843,7 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
                 }
               } else {
                 // Last resort: divide total solVolume equally
-                const totalTokenAmounts = walletAccount.tokenBalanceChanges.reduce((sum, tbc) => {
+                const totalTokenAmounts = walletAccount.tokenBalanceChanges.reduce((sum: number, tbc: any) => {
                   return sum + Math.abs(parseFloat(tbc.tokenAmount?.toString() || '0'));
                 }, 0);
                 tokenSOLVolume = totalTokenAmounts > 0 ? (currentTokenAmount / totalTokenAmounts) * solVolume : solVolume / walletAccount.tokenBalanceChanges.length;
@@ -2285,7 +2275,7 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
           chain: 'solana',
           imageUrl: stats.imageUrl || undefined,
           mintAddress: tokenAddress
-        });
+        } as typeof wins[0]);
       } else if (tokenPnLUSD < 0) {
         losses.push({
           coin: stats.symbol,
@@ -2294,7 +2284,7 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
           chain: 'solana',
           imageUrl: stats.imageUrl || undefined,
           mintAddress: tokenAddress
-        });
+        } as typeof losses[0]);
       }
     }
     
@@ -2356,8 +2346,10 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
 /**
  * Process Helius Solana transactions
  * Focuses on DEX swaps and token trades, not regular transfers
+ * @deprecated Not currently used - using processHeliusTransactionsWithPrices instead
  */
-function processHeliusTransactions(transactions: any[], walletAddress: string): Partial<TradingData> {
+// @ts-expect-error - Unused function, kept for reference
+function _processHeliusTransactions(transactions: any[], walletAddress: string): Partial<TradingData> {
   if (transactions.length === 0) {
     return {
       totalTrades: 0,
@@ -2535,8 +2527,8 @@ function processHeliusTransactions(transactions: any[], walletAddress: string): 
  */
 function processTransactions(
   transactions: any[],
-  network: 'solana' | 'evm',
-  chainId?: string
+  _network: 'solana' | 'evm',
+  _chainId?: string
 ): Partial<TradingData> {
   // For EVM chains, use Covalent format
   const totalTrades = transactions.length;
@@ -2592,7 +2584,7 @@ function aggregateEVMData(
   let totalPnL = 0;
   const allChains: string[] = [];
 
-  chainData.forEach(({ chainId, data, transactions }) => {
+  chainData.forEach(({ chainId, data, transactions: _transactions }) => {
     totalTrades += data.totalTrades || 0;
     totalVolume += data.totalVolume || 0;
     totalPnL += data.totalPnL || 0;
@@ -2735,12 +2727,12 @@ export async function fetchTradingData(
       const chainResults = await Promise.all(chainPromises);
       
       // Aggregate data from all chains
-      const aggregatedData = aggregateEVMData(chainResults);
+      aggregateEVMData(chainResults);
       
       // Calculate totals
-      const totalTrades = chainResults.reduce((sum, r) => sum + r.data.totalTrades || 0, 0);
-      const totalVolume = chainResults.reduce((sum, r) => sum + r.data.totalVolume || 0, 0);
-      const totalPnL = chainResults.reduce((sum, r) => sum + r.data.totalPnL || 0, 0);
+      const totalTrades = chainResults.reduce((sum, r) => sum + (r.data?.totalTrades || 0), 0);
+      const totalVolume = chainResults.reduce((sum, r) => sum + (r.data?.totalVolume || 0), 0);
+      const totalPnL = chainResults.reduce((sum, r) => sum + (r.data?.totalPnL || 0), 0);
       const chains = chainResults
         .filter(r => (r.data.totalTrades || 0) > 0)
         .map(r => r.chainId);

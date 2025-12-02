@@ -18,40 +18,61 @@ body {
   width: 100vw;
 }
 
-/* Wallet Input Styles */
+/* Wallet Input Styles - Spotify Wrapped 2023 Theme */
 .wallet-input-container {
   min-height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: #FF5B49; /* Coral red - Spotify Wrapped 2023 color */
   padding: 2rem;
+  position: relative;
+  overflow: hidden;
+}
+
+.wallet-input-bg-decoration {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-size: contain;
+  background-position: center;
+  background-repeat: no-repeat;
+  opacity: 0.3;
+  z-index: 0;
+  pointer-events: none;
 }
 
 .wallet-input-content {
-  background: rgba(255, 255, 255, 0.95);
-  backdrop-filter: blur(10px);
-  border-radius: 20px;
+  background: transparent;
   padding: 3rem;
-  max-width: 500px;
+  max-width: 600px;
   width: 100%;
   text-align: center;
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+  position: relative;
+  z-index: 1;
 }
 
-.title {
-  font-size: 3rem;
+.wallet-title {
+  font-size: 4rem;
   font-weight: bold;
-  margin-bottom: 0.5rem;
-  background: linear-gradient(45deg, #1db954, #191414);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+  margin-bottom: 1rem;
+  color: #000;
+  font-family: 'Spotify Mix', sans-serif;
+  text-transform: none;
+  letter-spacing: 0;
 }
 
-.subtitle {
-  font-size: 1.2rem;
-  color: #666;
+.wallet-subtitle {
+  font-size: 1.5rem;
+  color: #000;
+  margin-bottom: 3rem;
+  font-weight: normal;
+  font-family: 'Spotify Mix', sans-serif;
+}
+
+.wallet-form {
   margin-bottom: 2rem;
 }
 
@@ -63,23 +84,26 @@ body {
 }
 
 .network-btn {
-  padding: 0.75rem 1.5rem;
-  border: 2px solid #ddd;
-  background: white;
-  border-radius: 10px;
-  font-weight: 600;
+  padding: 1rem 2rem;
+  border: 2px solid #000;
+  background: transparent;
+  border-radius: 0;
+  font-weight: bold;
+  font-family: 'Spotify Mix', sans-serif;
+  font-size: 1rem;
+  color: #000;
   cursor: pointer;
   transition: all 0.3s ease;
 }
 
 .network-btn.active {
-  background: #1db954;
-  color: white;
-  border-color: #1db954;
+  background: #000;
+  color: #FF5B49;
+  border-color: #000;
 }
 
 .network-btn:hover:not(.active) {
-  border-color: #1db954;
+  background: rgba(0, 0, 0, 0.1);
 }
 
 .input-group {
@@ -90,43 +114,59 @@ body {
 }
 
 .wallet-input {
-  padding: 1rem;
-  border: 2px solid #ddd;
-  border-radius: 10px;
-  font-size: 1rem;
-  transition: border-color 0.3s ease;
+  padding: 1.2rem;
+  border: 2px solid #000;
+  border-radius: 0;
+  font-size: 1.1rem;
+  font-family: 'Spotify Mix', sans-serif;
+  background: transparent;
+  color: #000;
+  transition: all 0.3s ease;
+}
+
+.wallet-input::placeholder {
+  color: rgba(0, 0, 0, 0.5);
+  font-weight: normal;
 }
 
 .wallet-input:focus {
   outline: none;
-  border-color: #1db954;
+  background: rgba(0, 0, 0, 0.05);
+  border-color: #000;
 }
 
 .submit-btn {
-  padding: 1rem;
-  background: #1db954;
-  color: white;
-  border: none;
-  border-radius: 10px;
-  font-size: 1.1rem;
-  font-weight: 600;
+  padding: 1.2rem 2rem;
+  background: #000;
+  color: #FF5B49;
+  border: 2px solid #000;
+  border-radius: 0;
+  font-size: 1.2rem;
+  font-weight: bold;
+  font-family: 'Spotify Mix', sans-serif;
   cursor: pointer;
-  transition: background-color 0.3s ease;
+  transition: all 0.3s ease;
+  text-transform: none;
 }
 
 .submit-btn:hover:not(:disabled) {
-  background: #1aa34a;
+  background: rgba(0, 0, 0, 0.8);
+  transform: translateY(-2px);
 }
 
 .submit-btn:disabled {
-  background: #ccc;
+  background: rgba(0, 0, 0, 0.3);
+  color: rgba(255, 91, 73, 0.5);
   cursor: not-allowed;
+  transform: none;
 }
 
 .disclaimer {
   font-size: 0.9rem;
-  color: #666;
-  line-height: 1.5;
+  color: rgba(0, 0, 0, 0.7);
+  line-height: 1.6;
+  font-weight: normal;
+  font-family: 'Spotify Mix', sans-serif;
 }
 
 /* Slideshow Styles - Spotify Wrapped Style */
