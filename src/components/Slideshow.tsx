@@ -68,13 +68,13 @@ export const Slideshow: React.FC<SlideshowProps> = ({ data, slides, onRestart })
     setIsCapturing(true);
     
     try {
-      // Wait for animations/transitions to complete (slideIn animation is 0.5s)
-      await new Promise(resolve => setTimeout(resolve, 600));
+      // Wait for animations/transitions to complete (slideIn animation is 0.5s + buffer)
+      await new Promise(resolve => setTimeout(resolve, 1000));
       
-      // Capture the slide as a canvas, excluding UI elements
+      // Capture the slide container with proper settings
       const canvas = await html2canvas(slideRef.current, {
         backgroundColor: currentSlide.backgroundColor,
-        scale: 2, // Higher quality
+        scale: 2, // Higher quality (2x resolution)
         logging: false,
         useCORS: true,
         allowTaint: true,
@@ -86,12 +86,36 @@ export const Slideshow: React.FC<SlideshowProps> = ({ data, slides, onRestart })
         }
       });
       
+      // Crop to a better aspect ratio (4:5 like Instagram/Twitter optimal)
+      const targetWidth = 1080;
+      const targetHeight = 1350; // 4:5 ratio
+      const cropCanvas = document.createElement('canvas');
+      cropCanvas.width = targetWidth;
+      cropCanvas.height = targetHeight;
+      const ctx = cropCanvas.getContext('2d');
+      
+      if (ctx) {
+        // Calculate crop area (center crop)
+        const scale = Math.max(targetWidth / canvas.width, targetHeight / canvas.height);
+        const scaledWidth = canvas.width * scale;
+        const scaledHeight = canvas.height * scale;
+        const x = (targetWidth - scaledWidth) / 2;
+        const y = (targetHeight - scaledHeight) / 2;
+        
+        ctx.fillStyle = currentSlide.backgroundColor;
+        ctx.fillRect(0, 0, targetWidth, targetHeight);
+        ctx.drawImage(canvas, x, y, scaledWidth, scaledHeight);
+      }
+      
+      // Use the cropped canvas
+      const finalCanvas = cropCanvas;
+      
       // Convert to blob and data URL
-      canvas.toBlob(async (blob) => {
+      finalCanvas.toBlob(async (blob) => {
         if (!blob) return;
         
         // Create data URL for preview
-        const dataUrl = canvas.toDataURL('image/png');
+        const dataUrl = finalCanvas.toDataURL('image/png');
         
         // Generate tweet text based on slide
         let generatedTweetText = '';
@@ -309,7 +333,7 @@ export const Slideshow: React.FC<SlideshowProps> = ({ data, slides, onRestart })
         </button>
       )}
 
-      {/* Share Modal */}
+      {/* Share Modal - Spotify Wrapped Themed */}
       {showShareModal && (
         <div
           style={{
@@ -318,25 +342,25 @@ export const Slideshow: React.FC<SlideshowProps> = ({ data, slides, onRestart })
             left: 0,
             right: 0,
             bottom: 0,
-            background: 'rgba(0, 0, 0, 0.9)',
+            background: 'rgba(0, 0, 0, 0.95)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             zIndex: 9999,
-            padding: '20px'
+            padding: '20px',
+            backdropFilter: 'blur(10px)'
           }}
           onClick={() => setShowShareModal(false)}
         >
           <div
             style={{
-              background: '#fff',
-              borderRadius: '20px',
-              padding: '32px',
-              maxWidth: '600px',
+              background: '#FF5B49',
+              borderRadius: '0',
+              padding: '48px 40px',
+              maxWidth: '500px',
               width: '100%',
-              maxHeight: '90vh',
-              overflow: 'auto',
-              position: 'relative'
+              position: 'relative',
+              border: '4px solid #000'
             }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -347,13 +371,16 @@ export const Slideshow: React.FC<SlideshowProps> = ({ data, slides, onRestart })
                 position: 'absolute',
                 top: '16px',
                 right: '16px',
-                background: 'transparent',
+                background: '#000',
                 border: 'none',
+                width: '40px',
+                height: '40px',
                 fontSize: '24px',
                 cursor: 'pointer',
-                color: '#666',
-                padding: '8px',
-                lineHeight: 1
+                color: '#FF5B49',
+                padding: '0',
+                lineHeight: 1,
+                fontWeight: 'bold'
               }}
             >
               ×
@@ -361,27 +388,38 @@ export const Slideshow: React.FC<SlideshowProps> = ({ data, slides, onRestart })
 
             <h2 style={{
               fontFamily: 'Spotify Mix, sans-serif',
-              fontSize: '24px',
+              fontSize: '36px',
               fontWeight: 'bold',
-              marginBottom: '24px',
+              marginBottom: '8px',
               color: '#000',
-              textAlign: 'center'
+              textAlign: 'center',
+              letterSpacing: '-1px'
             }}>
-              Share to 𝕏 (Twitter)
+              Share Your Wrapped
             </h2>
+
+            <p style={{
+              fontFamily: 'Spotify Mix, sans-serif',
+              fontSize: '16px',
+              color: '#000',
+              textAlign: 'center',
+              marginBottom: '32px',
+              opacity: 0.8
+            }}>
+              to 𝕏
+            </p>
 
             {/* Image preview */}
             <div style={{
               width: '100%',
-              maxHeight: '400px',
               overflow: 'hidden',
-              borderRadius: '12px',
-              marginBottom: '24px',
-              border: '2px solid #eee'
+              marginBottom: '32px',
+              border: '4px solid #000',
+              background: '#000'
             }}>
               <img
                 src={capturedImage}
-                alt="Captured slide"
+                alt="Your Wrapped"
                 style={{
                   width: '100%',
                   height: 'auto',
@@ -390,78 +428,68 @@ export const Slideshow: React.FC<SlideshowProps> = ({ data, slides, onRestart })
               />
             </div>
 
-            {/* Tweet text preview */}
-            <div style={{
-              background: '#f5f5f5',
-              padding: '16px',
-              borderRadius: '12px',
-              marginBottom: '24px',
-              fontFamily: 'Spotify Mix, sans-serif',
-              fontSize: '14px',
-              color: '#333',
-              lineHeight: 1.5
-            }}>
-              {tweetText}
-            </div>
-
             {/* Action buttons */}
             <div style={{
               display: 'flex',
-              gap: '12px',
+              gap: '16px',
               flexDirection: 'column'
             }}>
               <button
                 onClick={copyImage}
                 style={{
                   background: '#000',
-                  color: '#fff',
-                  border: 'none',
-                  padding: '16px',
-                  borderRadius: '12px',
-                  fontSize: '16px',
+                  color: '#FF5B49',
+                  border: '4px solid #000',
+                  padding: '20px',
+                  borderRadius: '0',
+                  fontSize: '18px',
                   fontWeight: 'bold',
                   cursor: 'pointer',
                   fontFamily: 'Spotify Mix, sans-serif',
-                  transition: 'all 0.2s ease'
+                  transition: 'all 0.2s ease',
+                  textTransform: 'uppercase',
+                  letterSpacing: '1px'
                 }}
-                onMouseEnter={(e) => e.currentTarget.style.background = '#333'}
-                onMouseLeave={(e) => e.currentTarget.style.background = '#000'}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = '#000';
+                  e.currentTarget.style.transform = 'translateY(-2px)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = '#000';
+                  e.currentTarget.style.transform = 'translateY(0)';
+                }}
               >
-                📋 Copy Image
+                1. Copy Image
               </button>
 
               <button
                 onClick={openTwitter}
                 style={{
-                  background: '#1DA1F2',
-                  color: '#fff',
-                  border: 'none',
-                  padding: '16px',
-                  borderRadius: '12px',
-                  fontSize: '16px',
+                  background: '#000',
+                  color: '#FF5B49',
+                  border: '4px solid #000',
+                  padding: '20px',
+                  borderRadius: '0',
+                  fontSize: '18px',
                   fontWeight: 'bold',
                   cursor: 'pointer',
                   fontFamily: 'Spotify Mix, sans-serif',
-                  transition: 'all 0.2s ease'
+                  transition: 'all 0.2s ease',
+                  textTransform: 'uppercase',
+                  letterSpacing: '1px'
                 }}
-                onMouseEnter={(e) => e.currentTarget.style.background = '#1a8cd8'}
-                onMouseLeave={(e) => e.currentTarget.style.background = '#1DA1F2'}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = '#000';
+                  e.currentTarget.style.transform = 'translateY(-2px)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = '#000';
+                  e.currentTarget.style.transform = 'translateY(0)';
+                }}
               >
-                𝕏 Open Twitter & Paste Image
+                2. Post to 𝕏 (Paste Image)
               </button>
             </div>
-
-            <p style={{
-              textAlign: 'center',
-              fontSize: '12px',
-              color: '#999',
-              marginTop: '16px',
-              fontFamily: 'Spotify Mix, sans-serif',
-              lineHeight: 1.5
-            }}>
-              Click "Copy Image" then "Open Twitter".<br />
-              Paste the image in Twitter with Ctrl+V (Cmd+V on Mac)
-            </p>
           </div>
         </div>
       )}
