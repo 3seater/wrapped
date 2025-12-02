@@ -959,13 +959,15 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
     };
   }
 
-  // Use same approach as Cielo: Track total spent/received per token, then calculate aggregated PNL
+  // Use same approach as Cielo: Track total spent/received per token, then calculate aggregated PnL
   // { tokenAddress: { symbol: string, imageUrl: string | null, totalSpentSOL: number, totalReceivedSOL: number, totalTokensSold: number, lastTradeDate: Date } }
   const tokenStats: Record<string, { 
     symbol: string;
     imageUrl: string | null;
     totalSpentSOL: number;  // Total SOL spent on ALL buys
     totalReceivedSOL: number; // Total SOL received from ALL sells
+    totalSpentUSD: number;  // Total USD spent (converted at time of each buy using historical price)
+    totalReceivedUSD: number; // Total USD received (converted at time of each sell using historical price)
     totalTokensSold: number; // Total tokens sold (for cost basis calculation)
     lastTradeDate: Date 
   }> = {};
@@ -1489,6 +1491,75 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
   });
   
   console.log(`Sorted ${sortedTransactions.length} transactions chronologically (oldest first)`);
+  
+  // Fetch historical SOL prices for the date range of all trades
+  console.log('\n=== Fetching Historical SOL Prices ===');
+  
+  // Get all unique trade timestamps
+  const allTimestamps = sortedTransactions.map(tx => tx.timestamp || 0).filter(t => t > 0);
+  const minTimestamp = Math.min(...allTimestamps);
+  const maxTimestamp = Math.max(...allTimestamps);
+  
+  console.log(`Trade date range: ${new Date(minTimestamp * 1000).toLocaleDateString()} to ${new Date(maxTimestamp * 1000).toLocaleDateString()}`);
+  
+  // Fetch historical prices from CoinGecko (free tier: daily granularity)
+  const solPricesByDate: { [date: string]: number } = {};
+  const pricesByTimestamp: Array<{ timestamp: number; price: number }> = [];
+  let currentSOLPrice = 150; // Fallback
+  
+  try {
+    // Get historical prices for the date range
+    const priceResponse = await fetch(
+      `https://api.coingecko.com/api/v3/coins/solana/market_chart/range?vs_currency=usd&from=${minTimestamp}&to=${maxTimestamp}`
+    );
+    const priceData = await priceResponse.json();
+    
+    if (priceData?.prices && Array.isArray(priceData.prices)) {
+      // CoinGecko returns [[timestamp, price], [timestamp, price], ...]
+      priceData.prices.forEach(([timestamp, price]: [number, number]) => {
+        // Store by UTC date to avoid timezone issues
+        const date = new Date(timestamp).toISOString().split('T')[0]; // YYYY-MM-DD in UTC
+        solPricesByDate[date] = price;
+        
+        // Also store by timestamp for more granular lookups
+        pricesByTimestamp.push({ timestamp: timestamp / 1000, price }); // Convert ms to seconds
+      });
+      
+      // Use the most recent price as current price
+      currentSOLPrice = priceData.prices[priceData.prices.length - 1][1];
+      
+      console.log(`✅ Fetched ${Object.keys(solPricesByDate).length} days of SOL price history`);
+      console.log(`📊 Granular data points: ${pricesByTimestamp.length} timestamps`);
+      console.log(`Current SOL price: $${currentSOLPrice.toFixed(2)}`);
+      console.log(`Sample prices:`, Object.entries(solPricesByDate).slice(0, 3).map(([date, price]) => `${date}: $${price.toFixed(2)}`));
+    } else {
+      console.warn('⚠️  No price data returned from CoinGecko');
+    }
+  } catch (error) {
+    console.error('❌ Failed to fetch historical SOL prices:', error);
+    console.warn('Using fallback price of $150 for all trades');
+  }
+  
+  // Helper function to get SOL price for a specific timestamp (more accurate than by date)
+  const getSolPriceForTimestamp = (tradeTimestamp: number): number => {
+    if (pricesByTimestamp.length === 0) {
+      return currentSOLPrice;
+    }
+    
+    // Find the closest price by timestamp (linear interpolation would be even better)
+    let closestPrice = currentSOLPrice;
+    let minDiff = Infinity;
+    
+    for (const { timestamp, price } of pricesByTimestamp) {
+      const diff = Math.abs(timestamp - tradeTimestamp);
+      if (diff < minDiff) {
+        minDiff = diff;
+        closestPrice = price;
+      }
+    }
+    
+    return closestPrice;
+  };
   
   // Process transactions to identify trades
   let processedCount = 0;
@@ -2030,6 +2101,8 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
                 imageUrl: imageUrl,
                 totalSpentSOL: 0,
                 totalReceivedSOL: 0,
+                totalSpentUSD: 0,
+                totalReceivedUSD: 0,
                 totalTokensSold: 0,
                 lastTradeDate: timestamp
               };
@@ -2048,13 +2121,25 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
               // Track total SOL spent on this token
               tokenStats[currentTokenMint].totalSpentSOL += tokenSOLVolume;
               
-              console.log(`Buy: ${tokenStats[currentTokenMint].symbol} (${currentTokenMint.slice(0, 8)}) - ${currentTokenAmount.toFixed(2)} tokens for ${tokenSOLVolume.toFixed(4)} SOL`);
+              // Convert to USD using SOL price at this trade's timestamp (more accurate)
+              const tradeTimestamp = Math.floor(timestamp.getTime() / 1000); // Convert to seconds
+              const solPriceForTrade = getSolPriceForTimestamp(tradeTimestamp);
+              const tradeValueUSD = tokenSOLVolume * solPriceForTrade;
+              tokenStats[currentTokenMint].totalSpentUSD += tradeValueUSD;
+              
+              console.log(`Buy: ${tokenStats[currentTokenMint].symbol} (${currentTokenMint.slice(0, 8)}) - ${currentTokenAmount.toFixed(2)} tokens for ${tokenSOLVolume.toFixed(4)} SOL ($${tradeValueUSD.toFixed(2)} @ $${solPriceForTrade.toFixed(2)}/SOL)`);
             } else if (currentTradeType === 'sell' && tokenSOLVolume > 0) {
               // Selling token for SOL - track total received in SOL
               tokenStats[currentTokenMint].totalReceivedSOL += tokenSOLVolume;
               tokenStats[currentTokenMint].totalTokensSold += currentTokenAmount;
               
-              console.log(`✅ SELL: ${tokenStats[currentTokenMint].symbol} (${currentTokenMint.slice(0, 8)}) - ${currentTokenAmount.toFixed(2)} tokens for ${tokenSOLVolume.toFixed(4)} SOL`);
+              // Convert to USD using SOL price at this trade's timestamp (more accurate)
+              const tradeTimestamp = Math.floor(timestamp.getTime() / 1000); // Convert to seconds
+              const solPriceForTrade = getSolPriceForTimestamp(tradeTimestamp);
+              const tradeValueUSD = tokenSOLVolume * solPriceForTrade;
+              tokenStats[currentTokenMint].totalReceivedUSD += tradeValueUSD;
+              
+              console.log(`✅ SELL: ${tokenStats[currentTokenMint].symbol} (${currentTokenMint.slice(0, 8)}) - ${currentTokenAmount.toFixed(2)} tokens for ${tokenSOLVolume.toFixed(4)} SOL ($${tradeValueUSD.toFixed(2)} @ $${solPriceForTrade.toFixed(2)}/SOL)`);
               console.log(`   TX: ${tx.signature?.slice(0, 16)}... | solIn: ${solIn}, tokenSOLVolume: ${tokenSOLVolume}`);
               
               // Update position for tracking (to know if fully sold)
@@ -2130,8 +2215,9 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
             }
           }
         }
-        txTotalSolOut += maxNativeSolOut;
-        txTotalSolIn += maxNativeSolIn;
+        // DON'T add native transfers yet - we need to compare with WSOL first to avoid double-counting!
+        // txTotalSolOut += maxNativeSolOut;
+        // txTotalSolIn += maxNativeSolIn;
         
         // CRITICAL FIX: Check tokenBalanceChanges for WSOL FIRST - this is MORE ACCURATE!
         // tokenBalanceChanges shows the actual NET balance change, which is what we need
@@ -2167,8 +2253,14 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
           let maxWsolOut = 0;
           let maxWsolIn = 0;
           
+          console.log(`[WSOL TRANSFERS CHECK] TX ${txSig}... checking ${tx.tokenTransfers.length} transfers`);
+          console.log(`[DEBUG] WSOL_MINT we're looking for: ${WSOL_MINT}`);
+          
           for (const wsolTransfer of tx.tokenTransfers) {
             const wsolMint = wsolTransfer.mint || wsolTransfer.tokenAddress || wsolTransfer.token || '';
+            console.log(`  Transfer mint: ${wsolMint.slice(0, 12)}... (length: ${wsolMint.length})`);
+            console.log(`  Matches WSOL? ${wsolMint === WSOL_MINT}`);
+            
             if (wsolMint === WSOL_MINT) {
               const wsolFrom = wsolTransfer.fromUserAccount || wsolTransfer.from || '';
               const wsolTo = wsolTransfer.toUserAccount || wsolTransfer.to || '';
@@ -2178,24 +2270,45 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
               // If amount is small (< 1000), it might already be in SOL
               const wsolAmount = rawAmount > 1e6 ? rawAmount / 1e9 : rawAmount;
               
+              console.log(`  WSOL transfer: from=${wsolFrom.slice(0,8)} to=${wsolTo.slice(0,8)} amount=${wsolAmount.toFixed(4)} SOL`);
+              console.log(`    From wallet? ${wsolFrom === walletAddress}, To wallet? ${wsolTo === walletAddress}`);
+              
               if (wsolFrom === walletAddress && wsolTo !== walletAddress && wsolAmount > 0.0001) {
+                console.log(`    → Adding to maxWsolOut: ${wsolAmount}`);
                 maxWsolOut = Math.max(maxWsolOut, wsolAmount); // Use max, not sum!
               } else if (wsolTo === walletAddress && wsolFrom !== walletAddress && wsolAmount > 0.0001) {
+                console.log(`    → Adding to maxWsolIn: ${wsolAmount}`);
                 maxWsolIn = Math.max(maxWsolIn, wsolAmount); // Use max, not sum!
               }
             }
           }
           
-          // Add the max values (not the sum of all transfers)
-          txTotalSolOut += maxWsolOut;
-          txTotalSolIn += maxWsolIn;
+          console.log(`[WSOL TOTALS] maxWsolOut: ${maxWsolOut}, maxWsolIn: ${maxWsolIn}`);
+          console.log(`[NATIVE TOTALS] maxNativeSolOut: ${maxNativeSolOut}, maxNativeSolIn: ${maxNativeSolIn}`);
+          
+          // CRITICAL: Use the LARGER of native or WSOL, NOT BOTH!
+          // They often represent the SAME SOL movement (native wraps to WSOL or vice versa)
+          txTotalSolOut = Math.max(maxNativeSolOut, maxWsolOut);
+          txTotalSolIn = Math.max(maxNativeSolIn, maxWsolIn);
+          
+          console.log(`[SOL TOTALS FINAL] Using max of native/WSOL - txTotalSolOut: ${txTotalSolOut}, txTotalSolIn: ${txTotalSolIn}`);
         } else if (wsolFromBalanceChange > 0) {
           // Use the balance change (more accurate, avoids double-counting)
+          console.log(`[WSOL BALANCE CHANGE] Using balance change instead of transfers: ${wsolFromBalanceChange}, direction: ${wsolBalanceChangeDirection}`);
+          console.log(`[NATIVE TOTALS] maxNativeSolOut: ${maxNativeSolOut}, maxNativeSolIn: ${maxNativeSolIn}`);
+          
+          // CRITICAL: Compare balance change with native transfers, use the larger
           if (wsolBalanceChangeDirection === 'out') {
-            txTotalSolOut += wsolFromBalanceChange;
+            txTotalSolOut = Math.max(maxNativeSolOut, wsolFromBalanceChange);
           } else if (wsolBalanceChangeDirection === 'in') {
-            txTotalSolIn += wsolFromBalanceChange;
+            txTotalSolIn = Math.max(maxNativeSolIn, wsolFromBalanceChange);
           }
+          console.log(`[SOL TOTALS FINAL] Using max of native/balanceChange - txTotalSolOut: ${txTotalSolOut}, txTotalSolIn: ${txTotalSolIn}`);
+        } else {
+          // No WSOL found, just use native transfers
+          txTotalSolOut = maxNativeSolOut;
+          txTotalSolIn = maxNativeSolIn;
+          console.log(`[SOL TOTALS FINAL] No WSOL, using native only - txTotalSolOut: ${txTotalSolOut}, txTotalSolIn: ${txTotalSolIn}`);
         }
         
         // Collect all valid token transfers first
@@ -2236,6 +2349,7 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
           }
           
           if (transferTradeType && transferAmount > 0) {
+            console.log(`[ADDING TO VALID TRANSFERS] ${transferTradeType.toUpperCase()}: ${transferMint.slice(0, 8)}, amount: ${transferAmount}`);
             validTransfers.push({
               mint: transferMint,
               amount: transferAmount,
@@ -2260,6 +2374,10 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
         // Now process transfers and distribute SOL proportionally
         // If multiple tokens, distribute SOL based on token amounts (rough approximation)
         // For more accuracy, we'd need token prices, but this is better than double-counting
+        console.log(`[VALID TRANSFERS] Found ${validTransfers.length} valid transfers:`);
+        validTransfers.forEach((t, idx) => {
+          console.log(`  [${idx}] ${t.tradeType.toUpperCase()}: ${t.mint.slice(0, 8)}, amount: ${t.amount}`);
+        });
         const totalTokenAmount = validTransfers.reduce((sum, t) => sum + t.amount, 0);
         
         for (const transfer of validTransfers) {
@@ -2305,13 +2423,17 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
           } else if (transfer.tradeType === 'sell') {
             // CRITICAL: Use txTotalSolIn which is calculated ONCE per transaction and avoids double-counting
             // Don't use solVolume as fallback - it might include WSOL that's already counted in txTotalSolIn
+            console.log(`[SELL CALCULATION] Token: ${transfer.mint.slice(0,8)}, validTransfers.length: ${validTransfers.length}, txTotalSolIn: ${txTotalSolIn}`);
+            
             if (validTransfers.length === 1) {
               // Single token - use all SOL in
               transferTokenSOLVolume = txTotalSolIn > 0 ? txTotalSolIn : 0;
+              console.log(`[SELL] Single token - using full txTotalSolIn: ${transferTokenSOLVolume}`);
             } else {
               // Multiple tokens - distribute proportionally
               const proportion = totalTokenAmount > 0 ? transfer.amount / totalTokenAmount : 1 / validTransfers.length;
               transferTokenSOLVolume = txTotalSolIn > 0 ? txTotalSolIn * proportion : 0;
+              console.log(`[SELL] Multiple tokens - proportion: ${proportion}, transferTokenSOLVolume: ${transferTokenSOLVolume}`);
             }
             
             // Fallback: use native balance change if still 0 (but NOT solVolume to avoid double-counting)
@@ -2346,6 +2468,8 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
                 imageUrl: imageUrl,
                 totalSpentSOL: 0,
                 totalReceivedSOL: 0,
+                totalSpentUSD: 0,
+                totalReceivedUSD: 0,
                 totalTokensSold: 0,
                 lastTradeDate: timestamp
               };
@@ -2361,12 +2485,24 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
               pos.totalCostSOL += transferTokenSOLVolume;
               tokenStats[transfer.mint].totalSpentSOL += transferTokenSOLVolume;
               
-              console.log(`Buy (from tokenTransfers): ${tokenStats[transfer.mint].symbol} (${transfer.mint.slice(0, 8)}) - ${transfer.amount.toFixed(2)} tokens for ${transferTokenSOLVolume.toFixed(4)} SOL`);
+              // Convert to USD using SOL price at this trade's timestamp (more accurate)
+              const tradeTimestamp = Math.floor(timestamp.getTime() / 1000);
+              const solPriceForTrade = getSolPriceForTimestamp(tradeTimestamp);
+              const tradeValueUSD = transferTokenSOLVolume * solPriceForTrade;
+              tokenStats[transfer.mint].totalSpentUSD += tradeValueUSD;
+              
+              console.log(`Buy (from tokenTransfers): ${tokenStats[transfer.mint].symbol} (${transfer.mint.slice(0, 8)}) - ${transfer.amount.toFixed(2)} tokens for ${transferTokenSOLVolume.toFixed(4)} SOL ($${tradeValueUSD.toFixed(2)})`);
             } else if (transfer.tradeType === 'sell') {
               tokenStats[transfer.mint].totalReceivedSOL += transferTokenSOLVolume;
               tokenStats[transfer.mint].totalTokensSold += transfer.amount;
               
-              console.log(`Sell (from tokenTransfers): ${tokenStats[transfer.mint].symbol} (${transfer.mint.slice(0, 8)}) - ${transfer.amount.toFixed(2)} tokens for ${transferTokenSOLVolume.toFixed(4)} SOL`);
+              // Convert to USD using SOL price at this trade's timestamp (more accurate)
+              const tradeTimestamp = Math.floor(timestamp.getTime() / 1000);
+              const solPriceForTrade = getSolPriceForTimestamp(tradeTimestamp);
+              const tradeValueUSD = transferTokenSOLVolume * solPriceForTrade;
+              tokenStats[transfer.mint].totalReceivedUSD += tradeValueUSD;
+              
+              console.log(`Sell (from tokenTransfers): ${tokenStats[transfer.mint].symbol} (${transfer.mint.slice(0, 8)}) - ${transfer.amount.toFixed(2)} tokens for ${transferTokenSOLVolume.toFixed(4)} SOL ($${tradeValueUSD.toFixed(2)})`);
               
               // Update position
               if (positions[transfer.mint] && positions[transfer.mint].amount > 0) {
@@ -2400,6 +2536,8 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
                   imageUrl: imageUrl,
                   totalSpentSOL: 0,
                   totalReceivedSOL: 0,
+                  totalSpentUSD: 0,
+                  totalReceivedUSD: 0,
                   totalTokensSold: 0,
                   lastTradeDate: timestamp
                 };
@@ -2413,7 +2551,13 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
               pos.totalCostSOL += estimatedSOL;
               tokenStats[transfer.mint].totalSpentSOL += estimatedSOL;
               
-              console.log(`Buy (from tokenTransfers, estimated): ${tokenStats[transfer.mint].symbol} (${transfer.mint.slice(0, 8)}) - ${transfer.amount.toFixed(2)} tokens for ${estimatedSOL.toFixed(4)} SOL (ESTIMATED)`);
+              // Convert to USD using SOL price at this trade's timestamp (more accurate)
+              const tradeTimestamp = Math.floor(timestamp.getTime() / 1000);
+              const solPriceForTrade = getSolPriceForTimestamp(tradeTimestamp);
+              const tradeValueUSD = estimatedSOL * solPriceForTrade;
+              tokenStats[transfer.mint].totalSpentUSD += tradeValueUSD;
+              
+              console.log(`Buy (from tokenTransfers, estimated): ${tokenStats[transfer.mint].symbol} (${transfer.mint.slice(0, 8)}) - ${transfer.amount.toFixed(2)} tokens for ${estimatedSOL.toFixed(4)} SOL ($${tradeValueUSD.toFixed(2)}) (ESTIMATED)`);
             } else {
               console.warn(`⚠️  Token transfer detected but no SOL volume for ${transfer.mint.slice(0, 8)} (${transfer.tradeType})`);
             }
@@ -2453,6 +2597,8 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
             imageUrl: imageUrl,
             totalSpentSOL: 0,
             totalReceivedSOL: 0,
+            totalSpentUSD: 0,
+            totalReceivedUSD: 0,
             totalTokensSold: 0,
             lastTradeDate: timestamp
           };
@@ -2471,10 +2617,22 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
           // Track total SOL spent on this token
           tokenStats[tokenMint].totalSpentSOL += solVolume;
           
-          console.log(`Buy: ${tokenMint.slice(0, 8)} - ${tokenAmount.toFixed(2)} tokens for ${solVolume.toFixed(4)} SOL`);
+          // Convert to USD using SOL price at this trade's timestamp (more accurate)
+          const tradeTimestamp = Math.floor(timestamp.getTime() / 1000);
+          const solPriceForTrade = getSolPriceForTimestamp(tradeTimestamp);
+          const tradeValueUSD = solVolume * solPriceForTrade;
+          tokenStats[tokenMint].totalSpentUSD += tradeValueUSD;
+          
+          console.log(`Buy: ${tokenMint.slice(0, 8)} - ${tokenAmount.toFixed(2)} tokens for ${solVolume.toFixed(4)} SOL ($${tradeValueUSD.toFixed(2)})`);
         } else if (tradeType === 'sell' && solVolume > 0) {
           // Selling token for SOL - track total received in SOL
           tokenStats[tokenMint].totalReceivedSOL += solVolume;
+          
+          // Convert to USD using SOL price at this trade's timestamp (more accurate)
+          const sellTimestamp = Math.floor(timestamp.getTime() / 1000);
+          const solPriceForSell = getSolPriceForTimestamp(sellTimestamp);
+          const sellValueUSD = solVolume * solPriceForSell;
+          tokenStats[tokenMint].totalReceivedUSD += sellValueUSD;
           tokenStats[tokenMint].totalTokensSold += tokenAmount;
           
           console.log(`Sell: ${tokenMint.slice(0, 8)} - ${tokenAmount.toFixed(2)} tokens for ${solVolume.toFixed(4)} SOL`);
@@ -2531,9 +2689,6 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
   // Count total trades from tradesByDate (more accurate)
   const totalTrades = Object.values(tradesByDate).reduce((sum, day) => sum + day.count, 0);
   
-  // Define SOL price constant BEFORE it's used in logging
-  const SOL_PRICE_USD = 150; // Approximate SOL price for USD conversion
-  
   console.log(`\n=== Processing Token Stats for PNL Calculation ===`);
   console.log(`Total unique tokens tracked: ${Object.keys(tokenStats).length}`);
   console.log(`Total volume tracked: ${totalVolumeSOL.toFixed(4)} SOL`);
@@ -2548,7 +2703,7 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
   console.log(`Total SOL spent (all tokens): ${totalSpentAllTokens.toFixed(4)} SOL`);
   console.log(`Total SOL received (all tokens): ${totalReceivedAllTokens.toFixed(4)} SOL`);
   const netPnLSOL = totalReceivedAllTokens - totalSpentAllTokens;
-  console.log(`Net PNL (before filtering): ${netPnLSOL.toFixed(4)} SOL ($${(netPnLSOL * SOL_PRICE_USD).toFixed(2)} USD)`);
+  console.log(`Net PNL (before filtering): ${netPnLSOL.toFixed(4)} SOL ($${(netPnLSOL * currentSOLPrice).toFixed(2)} USD at current price)`);
   
   console.log(`Sample token stats:`, Object.entries(tokenStats).slice(0, 10).map(([addr, stats]) => ({
     address: addr.slice(0, 8),
@@ -2575,12 +2730,10 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
       return;
     }
     
-    // SIMPLE PNL: Total Received SOL - Total Spent SOL
-    // This works for both fully sold and partially sold positions
-    // For partially sold: we only count realized PNL (sells - cost basis of sold tokens)
-    // But the user wants: all sells minus all buys, which is simpler
-    const tokenPnLSOL = stats.totalReceivedSOL - stats.totalSpentSOL;
-    const tokenPnLUSD = tokenPnLSOL * SOL_PRICE_USD;
+    // SIMPLE PNL: Total Received USD - Total Spent USD
+    // USD values are converted using historical SOL prices at the time of each trade
+    // This gives accurate PnL accounting for SOL price changes over time
+    const tokenPnLUSD = stats.totalReceivedUSD - stats.totalSpentUSD;
     
     // Only include if there were actual trades (either buys or sells)
     const hasTrades = stats.totalSpentSOL > 0 || stats.totalReceivedSOL > 0;
@@ -2645,7 +2798,7 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
   const tradesByDateArray = Object.entries(tradesByDate).sort(([, a], [, b]) => b.count - a.count);
   console.log(`\n=== FINAL PNL SUMMARY (ALL VALUES IN USD) ===`);
   console.log(`Total PNL: $${totalPnL.toFixed(2)} USD (calculated from ${Object.keys(tokenStats).length} tokens)`);
-  console.log(`Total PNL in SOL: ${(totalPnL / SOL_PRICE_USD).toFixed(4)} SOL (for reference only)`);
+  console.log(`Total PNL in SOL: ${(totalPnL / currentSOLPrice).toFixed(4)} SOL (estimated using current SOL price)`);
   console.log(`Processed ${totalTrades} trades, ${totalVolumeSOL.toFixed(2)} SOL volume ($${totalVolumeUSD.toFixed(2)} USD)`);
   console.log(`Top trading days:`, tradesByDateArray.slice(0, 5).map(([date, data]) => `${date}: ${data.count} trades`));
   console.log(`Wins: ${wins.length}, Losses: ${losses.length}`);
