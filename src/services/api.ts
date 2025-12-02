@@ -2490,28 +2490,50 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
         // CRITICAL FIX: Check tokenBalanceChanges for WSOL FIRST - this is MORE ACCURATE!
         // tokenBalanceChanges shows the actual NET balance change, which is what we need
         // We check this FIRST to avoid double-counting with tokenTransfers
+        console.log(`\n[WSOL BALANCE CHECK] Checking for WSOL balance changes...`);
+        console.log(`[WSOL BALANCE CHECK] walletAccount exists: ${!!walletAccount}`);
+        console.log(`[WSOL BALANCE CHECK] tokenBalanceChanges exists: ${!!walletAccount?.tokenBalanceChanges}`);
+        console.log(`[WSOL BALANCE CHECK] tokenBalanceChanges count: ${walletAccount?.tokenBalanceChanges?.length || 0}`);
+        
         let wsolFromBalanceChange = 0;
         let wsolBalanceChangeDirection: 'out' | 'in' | null = null;
         if (walletAccount && walletAccount.tokenBalanceChanges) {
+          console.log(`[WSOL BALANCE CHECK] Scanning ${walletAccount.tokenBalanceChanges.length} token balance changes for WSOL...`);
+          walletAccount.tokenBalanceChanges.forEach((tbc: any, idx: number) => {
+            const mint = tbc.mint || tbc.tokenAddress || '';
+            const change = parseFloat(tbc.tokenAmount?.toString() || '0');
+            console.log(`  [${idx}] Mint: ${mint.slice(0, 12)}..., Change: ${change}, IsWSOL: ${mint === WSOL_MINT}`);
+          });
+          
           for (const tbc of walletAccount.tokenBalanceChanges) {
             const mint = tbc.mint || tbc.tokenAddress || '';
             if (mint === WSOL_MINT) {
               const wsolChange = parseFloat(tbc.tokenAmount?.toString() || '0');
               const wsolAmount = Math.abs(wsolChange) / 1e9; // tokenAmount is in lamports
               
+              console.log(`[WSOL BALANCE CHECK] ✅ FOUND WSOL! Raw change: ${wsolChange}, Amount: ${wsolAmount.toFixed(6)} SOL`);
+              
               // WSOL balance decreasing = SOL going out (buy)
               if (wsolChange < 0 && wsolAmount > 0.0001) {
                 wsolFromBalanceChange = wsolAmount;
                 wsolBalanceChangeDirection = 'out';
+                console.log(`[WSOL BALANCE CHECK] → WSOL DECREASING (buy): ${wsolAmount.toFixed(4)} SOL going OUT`);
               }
               // WSOL balance increasing = SOL coming in (sell)
               else if (wsolChange > 0 && wsolAmount > 0.0001) {
                 wsolFromBalanceChange = wsolAmount;
                 wsolBalanceChangeDirection = 'in';
+                console.log(`[WSOL BALANCE CHECK] → WSOL INCREASING (sell): ${wsolAmount.toFixed(4)} SOL coming IN`);
+              } else {
+                console.log(`[WSOL BALANCE CHECK] → WSOL change too small or zero: ${wsolAmount.toFixed(6)} SOL`);
               }
             }
           }
+        } else {
+          console.log(`[WSOL BALANCE CHECK] ⚠️ No wallet account or tokenBalanceChanges!`);
         }
+        
+        console.log(`[WSOL BALANCE CHECK] Result: wsolFromBalanceChange=${wsolFromBalanceChange.toFixed(4)}, direction=${wsolBalanceChangeDirection}\n`);
         
         // Check WSOL transfers - ONLY if we didn't find a balance change
         // tokenTransfers and tokenBalanceChanges often represent the same movement, so we should use balance change as primary
@@ -2562,21 +2584,23 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
           console.log(`[SOL TOTALS FINAL] Using max of native/WSOL - txTotalSolOut: ${txTotalSolOut}, txTotalSolIn: ${txTotalSolIn}`);
         } else if (wsolFromBalanceChange > 0) {
           // Use the balance change (more accurate, avoids double-counting)
-          console.log(`[WSOL BALANCE CHANGE] Using balance change instead of transfers: ${wsolFromBalanceChange}, direction: ${wsolBalanceChangeDirection}`);
-          console.log(`[NATIVE TOTALS] maxNativeSolOut: ${maxNativeSolOut}, maxNativeSolIn: ${maxNativeSolIn}`);
+          console.log(`\n[WSOL BALANCE CHANGE] ✅ Using WSOL balance change: ${wsolFromBalanceChange.toFixed(4)} SOL, direction: ${wsolBalanceChangeDirection}`);
+          console.log(`[WSOL BALANCE CHANGE] Current native totals - out: ${maxNativeSolOut.toFixed(4)}, in: ${maxNativeSolIn.toFixed(4)}`);
           
           // CRITICAL: Compare balance change with native transfers, use the larger
           if (wsolBalanceChangeDirection === 'out') {
             txTotalSolOut = Math.max(maxNativeSolOut, wsolFromBalanceChange);
+            console.log(`[WSOL BALANCE CHANGE] Direction OUT - setting txTotalSolOut = ${txTotalSolOut.toFixed(4)}`);
           } else if (wsolBalanceChangeDirection === 'in') {
             txTotalSolIn = Math.max(maxNativeSolIn, wsolFromBalanceChange);
+            console.log(`[WSOL BALANCE CHANGE] Direction IN - setting txTotalSolIn = ${txTotalSolIn.toFixed(4)} ✅✅✅`);
           }
-          console.log(`[SOL TOTALS FINAL] Using max of native/balanceChange - txTotalSolOut: ${txTotalSolOut}, txTotalSolIn: ${txTotalSolIn}`);
+          console.log(`[SOL TOTALS FINAL] Using max of native/balanceChange - txTotalSolOut: ${txTotalSolOut.toFixed(4)}, txTotalSolIn: ${txTotalSolIn.toFixed(4)}\n`);
         } else {
           // No WSOL found, just use native transfers
           txTotalSolOut = maxNativeSolOut;
           txTotalSolIn = maxNativeSolIn;
-          console.log(`[SOL TOTALS FINAL] No WSOL, using native only - txTotalSolOut: ${txTotalSolOut}, txTotalSolIn: ${txTotalSolIn}`);
+          console.log(`\n[SOL TOTALS FINAL] ⚠️ No WSOL balance change, using native only - txTotalSolOut: ${txTotalSolOut.toFixed(4)}, txTotalSolIn: ${txTotalSolIn.toFixed(4)}\n`);
         }
         
         // Collect all valid token transfers first
