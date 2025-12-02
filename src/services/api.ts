@@ -2450,9 +2450,19 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
         
         // Check native transfers
         // CRITICAL FIX: Track max SOL amount per direction, don't sum all transfers!
+        console.log(`\n[TRANSFERS PATH SOL] TX ${txSig}..., Wallet: ${walletAddress.slice(0, 8)}...`);
+        
         let maxNativeSolOut = 0;
         let maxNativeSolIn = 0;
         if (tx.nativeTransfers && Array.isArray(tx.nativeTransfers)) {
+          console.log(`[TRANSFERS PATH SOL] Found ${tx.nativeTransfers.length} native transfers:`);
+          tx.nativeTransfers.forEach((nt: any, idx: number) => {
+            const from = nt.fromUserAccount || nt.from || '';
+            const to = nt.toUserAccount || nt.to || '';
+            const amt = parseFloat(nt.amount?.toString() || '0') / 1e9;
+            console.log(`  [${idx}] ${amt.toFixed(6)} SOL: ${from.slice(0, 8)}... → ${to.slice(0, 8)}... (from=wallet:${from === walletAddress}, to=wallet:${to === walletAddress})`);
+          });
+          
           for (const natTransfer of tx.nativeTransfers) {
             const natFrom = natTransfer.fromUserAccount || natTransfer.from || '';
             const natTo = natTransfer.toUserAccount || natTransfer.to || '';
@@ -2460,11 +2470,16 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
             
             if (natFrom === walletAddress && natTo !== walletAddress && natAmount > 0.0001) {
               maxNativeSolOut = Math.max(maxNativeSolOut, natAmount); // Use max, not sum!
+              console.log(`[TRANSFERS PATH SOL] ✅ SOL OUT: ${natAmount.toFixed(4)}, max now: ${maxNativeSolOut.toFixed(4)}`);
             } else if (natTo === walletAddress && natFrom !== walletAddress && natAmount > 0.0001) {
               maxNativeSolIn = Math.max(maxNativeSolIn, natAmount); // Use max, not sum!
+              console.log(`[TRANSFERS PATH SOL] ✅ SOL IN: ${natAmount.toFixed(4)}, max now: ${maxNativeSolIn.toFixed(4)}`);
             }
           }
+        } else {
+          console.log(`[TRANSFERS PATH SOL] ⚠️ NO native transfers!`);
         }
+        console.log(`[TRANSFERS PATH SOL] Final: maxOut=${maxNativeSolOut.toFixed(4)}, maxIn=${maxNativeSolIn.toFixed(4)}\n`);
         // DON'T add native transfers yet - we need to compare with WSOL first to avoid double-counting!
         // txTotalSolOut += maxNativeSolOut;
         // txTotalSolIn += maxNativeSolIn;
