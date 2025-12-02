@@ -1,0 +1,597 @@
+/* Global Styles */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Spotify Mix', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: #000;
+  color: #000;
+  overflow-x: hidden;
+  font-weight: normal;
+}
+
+.app {
+  min-height: 100vh;
+  width: 100vw;
+}
+
+/* Wallet Input Styles */
+.wallet-input-container {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  padding: 2rem;
+}
+
+.wallet-input-content {
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(10px);
+  border-radius: 20px;
+  padding: 3rem;
+  max-width: 500px;
+  width: 100%;
+  text-align: center;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+}
+
+.title {
+  font-size: 3rem;
+  font-weight: bold;
+  margin-bottom: 0.5rem;
+  background: linear-gradient(45deg, #1db954, #191414);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.subtitle {
+  font-size: 1.2rem;
+  color: #666;
+  margin-bottom: 2rem;
+}
+
+.network-selector {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 2rem;
+  justify-content: center;
+}
+
+.network-btn {
+  padding: 0.75rem 1.5rem;
+  border: 2px solid #ddd;
+  background: white;
+  border-radius: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.network-btn.active {
+  background: #1db954;
+  color: white;
+  border-color: #1db954;
+}
+
+.network-btn:hover:not(.active) {
+  border-color: #1db954;
+}
+
+.input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+.wallet-input {
+  padding: 1rem;
+  border: 2px solid #ddd;
+  border-radius: 10px;
+  font-size: 1rem;
+  transition: border-color 0.3s ease;
+}
+
+.wallet-input:focus {
+  outline: none;
+  border-color: #1db954;
+}
+
+.submit-btn {
+  padding: 1rem;
+  background: #1db954;
+  color: white;
+  border: none;
+  border-radius: 10px;
+  font-size: 1.1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.3s ease;
+}
+
+.submit-btn:hover:not(:disabled) {
+  background: #1aa34a;
+}
+
+.submit-btn:disabled {
+  background: #ccc;
+  cursor: not-allowed;
+}
+
+.disclaimer {
+  font-size: 0.9rem;
+  color: #666;
+  line-height: 1.5;
+}
+
+/* Slideshow Styles - Spotify Wrapped Style */
+.slide-container {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  padding: 2rem;
+  position: relative;
+  transition: background-color 0.5s ease;
+  overflow: hidden;
+}
+
+/* Spotify Wrapped 2023 - Background images as decorative overlays */
+.slide-container {
+  position: relative;
+  /* Background images will be applied via inline styles from Slideshow component */
+}
+
+/* Additional decorative elements can be added here if needed */
+.slide-container::before,
+.slide-container::after {
+  content: '';
+  position: absolute;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0.8;
+}
+
+.slide-content {
+  max-width: 900px;
+  width: 100%;
+  text-align: left;
+  z-index: 2;
+  position: relative;
+}
+
+.trades-made-slide .slide-content,
+.total-volume-slide .slide-content {
+  text-align: center;
+}
+
+.slide-navigation {
+  position: fixed;
+  bottom: 2rem;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+  z-index: 10;
+}
+
+.nav-btn {
+  background: rgba(255, 255, 255, 0.2);
+  border: none;
+  font-size: 2rem;
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.3s ease;
+  backdrop-filter: blur(10px);
+}
+
+.nav-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.3);
+  transform: scale(1.1);
+}
+
+.nav-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.slide-indicators {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.indicator {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.progress-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.2);
+  z-index: 10;
+}
+
+.progress-fill {
+  height: 100%;
+  transition: width 0.5s ease;
+}
+
+.restart-btn {
+  position: fixed;
+  bottom: 2rem;
+  right: 2rem;
+  padding: 1rem 2rem;
+  background: transparent;
+  border: 2px solid;
+  border-radius: 25px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  z-index: 10;
+}
+
+.restart-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* Slide Content Styles - Spotify Wrapped Style */
+.slide {
+  animation: slideIn 0.5s ease-out;
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.slide-header {
+  margin-bottom: 2rem;
+  text-align: left;
+}
+
+.trades-made-slide .slide-header,
+.total-volume-slide .slide-header {
+  text-align: center;
+}
+
+.slide-title {
+  font-size: 3rem;
+  font-weight: bold;
+  margin-bottom: 1rem;
+  text-transform: none;
+  letter-spacing: 0;
+  color: inherit;
+  font-family: 'Spotify Mix', sans-serif;
+}
+
+.slide-subtitle {
+  font-size: 1.4rem;
+  opacity: 0.8;
+  color: #000;
+}
+
+.big-number {
+  font-size: 10rem;
+  font-weight: bold;
+  line-height: 1;
+  display: block;
+  font-family: 'Spotify Mix', sans-serif;
+  color: inherit;
+  text-align: center;
+  margin: 2rem 0;
+}
+
+.unit, .currency {
+  font-size: 2rem;
+  font-weight: 600;
+  opacity: 0.8;
+}
+
+.trade-count, .volume-display, .pnl-display {
+  margin: 2rem 0;
+  text-align: center;
+}
+
+.highlight-section {
+  margin: 2rem 0;
+  text-align: center;
+}
+
+.highlight-title {
+  font-size: 1.8rem;
+  margin-bottom: 1rem;
+  opacity: 0.9;
+}
+
+.highlight-value {
+  font-size: 1.2rem;
+  text-align: center;
+  font-weight: normal;
+}
+
+.highlight-value strong,
+.highlight-value .date {
+  font-weight: bold;
+}
+
+.date {
+  font-weight: bold;
+  margin-right: 0.5rem;
+}
+
+.detail {
+  opacity: 0.8;
+  font-weight: normal;
+}
+
+.detail strong,
+.detail .date {
+  font-weight: bold;
+  opacity: 1;
+}
+
+/* Lists - Spotify Wrapped Style */
+.losses-list, .wins-list, .paperhands-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1.2rem;
+  margin: 2rem 0;
+  max-width: 700px;
+  margin-left: 0;
+  margin-right: auto;
+  text-align: left;
+}
+
+.loss-item, .win-item, .paperhand-item {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  background: transparent;
+  padding: 0.5rem 0;
+  border-radius: 0;
+  backdrop-filter: none;
+}
+
+.loss-rank, .win-rank {
+  font-size: 2.5rem;
+  font-weight: bold;
+  color: inherit;
+  min-width: 50px;
+  text-align: left;
+}
+
+.coin-info {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex: 1;
+}
+
+.coin-image {
+  width: 80px;
+  height: 80px;
+  border-radius: 0;
+  object-fit: cover;
+  background: #e0e0e0;
+  border: none;
+}
+
+.coin-details {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.coin-name {
+  font-size: 1.3rem;
+  font-weight: normal;
+  color: inherit;
+  margin-bottom: 0.1rem;
+}
+
+.loss-amount, .win-amount {
+  font-size: 1.4rem;
+  font-weight: bold;
+  color: inherit;
+  text-align: right;
+  margin-left: auto;
+}
+
+.loss-date, .win-date {
+  font-size: 0.85rem;
+  opacity: 0.7;
+  color: inherit;
+  font-weight: bold;
+}
+
+.win-badge {
+  font-size: 1.5rem;
+}
+
+.paperhand-item {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.paperhand-coin {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  align-items: center;
+}
+
+.paperhand-potential {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  font-size: 1.1rem;
+}
+
+.ath-price, .missed-profit {
+  font-weight: 600;
+}
+
+.paperhand-emoji {
+  font-size: 2rem;
+  align-self: center;
+}
+
+/* Insights */
+.insight-text, .congrats-text {
+  font-size: 1.3rem;
+  line-height: 1.6;
+  margin: 2rem 0;
+  font-style: italic;
+}
+
+.share-text {
+  font-size: 1.1rem;
+  opacity: 0.8;
+  margin-top: 1rem;
+}
+
+.paperhands-quote {
+  font-size: 1.1rem;
+  margin-top: 1rem;
+  opacity: 0.9;
+}
+
+/* Stats Grid */
+.stats-grid, .breakdown-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 2rem;
+  margin: 3rem 0;
+  max-width: 600px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.stat-item, .breakdown-item {
+  text-align: center;
+  padding: 1.5rem;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 15px;
+  backdrop-filter: blur(10px);
+}
+
+.stat-label, .breakdown-label {
+  display: block;
+  font-size: 1rem;
+  opacity: 0.8;
+  margin-bottom: 0.5rem;
+}
+
+.stat-value, .breakdown-value {
+  display: block;
+  font-size: 1.5rem;
+  font-weight: normal;
+}
+
+.stat-value strong,
+.breakdown-value strong {
+  font-weight: bold;
+}
+
+/* Volume Breakdown */
+.volume-breakdown {
+  display: flex;
+  justify-content: space-around;
+  margin: 3rem 0;
+  max-width: 500px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.breakdown-item {
+  text-align: center;
+}
+
+.volume-insight {
+  margin-top: 3rem;
+}
+
+/* PnL Styles */
+.pnl-display.positive .big-number {
+  color: #00d4aa;
+}
+
+.pnl-display.negative .big-number {
+  color: #ff6b6b;
+}
+
+.pnl-indicator {
+  font-size: 3rem;
+  vertical-align: top;
+  margin-left: 0.5rem;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .title {
+    font-size: 2.5rem;
+  }
+
+  .slide-title {
+    font-size: 3rem;
+  }
+
+  .big-number {
+    font-size: 6rem;
+  }
+
+  .slide-navigation {
+    gap: 1rem;
+  }
+
+  .nav-btn {
+    width: 40px;
+    height: 40px;
+    font-size: 1.5rem;
+  }
+
+  .losses-list, .wins-list, .paperhands-list {
+    gap: 1rem;
+  }
+
+  .loss-item, .win-item, .paperhand-item {
+    padding: 1rem;
+  }
+
+  .stats-grid, .breakdown-grid {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  .volume-breakdown {
+    flex-direction: column;
+    gap: 1rem;
+  }
+}
