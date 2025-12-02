@@ -86,17 +86,68 @@ function App() {
         {error && (
           <div style={{
             position: 'fixed',
-            top: '20px',
+            top: '50%',
             left: '50%',
-            transform: 'translateX(-50%)',
-            background: '#ff6b6b',
-            color: 'white',
-            padding: '1rem 2rem',
-            borderRadius: '8px',
+            transform: 'translate(-50%, -50%)',
+            background: '#000',
+            color: '#fff',
+            padding: '2rem 3rem',
+            borderRadius: '0',
             zIndex: 1001,
-            boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
+            maxWidth: '600px',
+            width: '90%',
+            border: '2px solid #FF5B49',
+            textAlign: 'center',
+            fontFamily: 'Spotify Mix, sans-serif'
           }}>
-            {error}
+            <h2 style={{ 
+              fontSize: '1.5rem', 
+              fontWeight: 'bold', 
+              marginBottom: '1rem',
+              color: '#FF5B49'
+            }}>
+              Setup Required
+            </h2>
+            <p style={{ 
+              fontSize: '1rem', 
+              lineHeight: '1.6',
+              marginBottom: '1.5rem'
+            }}>
+              {error.includes('API keys') ? (
+                <>
+                  To use this app, you need to configure API keys in Netlify:
+                  <br /><br />
+                  <strong>1. Go to Netlify Dashboard → Site Settings → Environment Variables</strong>
+                  <br />
+                  <strong>2. Add at least one of these:</strong>
+                  <br />
+                  • <code style={{background: '#FF5B49', padding: '2px 6px'}}>VITE_HELIUS_API_KEY</code> (Recommended for Solana)
+                  <br />
+                  • <code style={{background: '#FF5B49', padding: '2px 6px'}}>VITE_CIELO_API_KEY</code> (Alternative for Solana)
+                  <br />
+                  • <code style={{background: '#FF5B49', padding: '2px 6px'}}>VITE_COVALENT_API_KEY</code> (For EVM chains)
+                  <br /><br />
+                  <strong>3. Redeploy your site</strong>
+                </>
+              ) : (
+                error
+              )}
+            </p>
+            <button
+              onClick={() => setError(null)}
+              style={{
+                background: '#FF5B49',
+                color: '#000',
+                border: '2px solid #000',
+                padding: '0.75rem 2rem',
+                fontSize: '1rem',
+                fontWeight: 'bold',
+                cursor: 'pointer',
+                fontFamily: 'Spotify Mix, sans-serif'
+              }}
+            >
+              Got it
+            </button>
           </div>
         )}
       </>

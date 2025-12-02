@@ -2693,10 +2693,17 @@ export async function fetchTradingData(
 
       // Check if we have any transactions
       if (transactions.length === 0) {
-        const errorMsg = !HELIUS_API_KEY && !CIELO_API_KEY && !COVALENT_API_KEY
+        const hasAnyKey = HELIUS_API_KEY || CIELO_API_KEY || COVALENT_API_KEY;
+        const errorMsg = !hasAnyKey
           ? 'No API keys configured. Please add at least one API key (Helius, Cielo, or Covalent) in Netlify environment variables.'
           : 'No transactions found for this wallet address. This could mean:\n- The wallet has no trading activity\n- API keys are invalid or expired\n- API rate limits were exceeded';
         console.error('No transactions found:', errorMsg);
+        console.error('API Key Status:', {
+          hasHelius: !!HELIUS_API_KEY,
+          hasCielo: !!CIELO_API_KEY,
+          hasCovalent: !!COVALENT_API_KEY,
+          isProduction: import.meta.env.PROD
+        });
         throw new Error(errorMsg);
       }
 
