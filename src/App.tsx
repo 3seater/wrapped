@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { WalletInput } from './components/WalletInput'
 import { Slideshow } from './components/Slideshow'
-import { mockTradingData, slides } from './mockData'
+import { slides } from './mockData'
 import { TradingData } from './types'
 import { fetchTradingData } from './services/api'
 import './App.css'
@@ -18,22 +18,36 @@ function App() {
 
     try {
       // Try to fetch real data from API
+      console.log('Fetching trading data for:', walletAddress, network);
       const data = await fetchTradingData(walletAddress, network)
+      console.log('Fetched data:', {
+        totalTrades: data.totalTrades,
+        totalVolume: data.totalVolume,
+        totalPnL: data.totalPnL,
+        wins: data.biggestWins.length,
+        losses: data.biggestLosses.length
+      });
+      
+      // Check if we got meaningful data
+      if (data.totalTrades === 0 && data.totalVolume === 0) {
+        throw new Error('No trading activity found for this wallet address.');
+      }
+      
       setTradingData(data)
       setCurrentView('slideshow')
     } catch (err) {
-      console.error('API fetch failed, using mock data:', err)
-      // Fallback to mock data if API fails
-      setError('Could not fetch real data. Showing demo data instead.')
-      const data = {
-        ...mockTradingData,
-        walletAddress,
-        currency: network === 'solana' ? 'SOL' as const : 'USD' as const
-      }
-      setTradingData(data)
-      setCurrentView('slideshow')
-    } finally {
+      console.error('API fetch failed:', err)
+      const errorMessage = err instanceof Error ? err.message : 'Could not fetch trading data';
+      
+      // Show error to user
+      setError(errorMessage)
+      
+      // Don't automatically fall back to mock data - let user see the error
+      // They can try again or check their API keys
       setIsLoading(false)
+      
+      // Optionally, you can still show mock data after a delay or user action
+      // For now, we'll just show the error
     }
   }
 

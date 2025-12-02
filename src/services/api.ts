@@ -7,6 +7,16 @@ const COINGECKO_API_KEY = import.meta.env.VITE_COINGECKO_API_KEY || 'CG-1RdhUX4X
 const CIELO_API_KEY = import.meta.env.VITE_CIELO_API_KEY || '';
 // DexScreener doesn't require API key for public endpoints
 
+// Log API key status (without exposing keys)
+if (import.meta.env.PROD) {
+  console.log('API Key Status (Production):', {
+    hasHelius: !!HELIUS_API_KEY,
+    hasCielo: !!CIELO_API_KEY,
+    hasCovalent: !!COVALENT_API_KEY,
+    hasCoinGecko: !!COINGECKO_API_KEY
+  });
+}
+
 // Chain IDs (Covalent format)
 const SOLANA_CHAIN_ID = 'solana-mainnet';
 const EVM_CHAIN_IDS = {
@@ -138,19 +148,35 @@ async function fetchCieloTransactions(
   
   while (hasMore && pageCount < maxPages) {
     // Build URL with pagination
-    let url = `/api/cielo?wallet=${walletAddress}&chain=${cieloChain}&limit=100&apiKey=${CIELO_API_KEY}`;
+    // In production, use full URL; in dev, use proxy
+    const isProduction = import.meta.env.PROD;
+    const baseUrl = isProduction 
+      ? 'https://feed-api.cielo.finance/api/v1/feed'
+      : '/api/cielo';
+    
+    let url = `${baseUrl}?wallet=${walletAddress}&chain=${cieloChain}&limit=100`;
     if (startingPoint) {
       url += `&starting_point=${startingPoint}`;
     }
     
     console.log(`Cielo page ${pageCount + 1}:`, url.replace(CIELO_API_KEY, '***'));
     
+    const headers: HeadersInit = {
+      'Accept': 'application/json',
+      'Content-Type': 'application/json',
+    };
+    
+    // In production, add API key as header (per Cielo docs)
+    if (isProduction && CIELO_API_KEY) {
+      headers['X-API-KEY'] = CIELO_API_KEY;
+    } else if (!isProduction) {
+      // In dev, pass API key as query param (proxy will handle it)
+      url += `&apiKey=${CIELO_API_KEY}`;
+    }
+    
     const response = await fetch(url, {
       method: 'GET',
-      headers: {
-        'Accept': 'application/json',
-        'Content-Type': 'application/json',
-      }
+      headers: headers
     });
     
     if (!response.ok) {
@@ -2665,6 +2691,15 @@ export async function fetchTradingData(
         }
       }
 
+      // Check if we have any transactions
+      if (transactions.length === 0) {
+        const errorMsg = !HELIUS_API_KEY && !CIELO_API_KEY && !COVALENT_API_KEY
+          ? 'No API keys configured. Please add at least one API key (Helius, Cielo, or Covalent) in Netlify environment variables.'
+          : 'No transactions found for this wallet address. This could mean:\n- The wallet has no trading activity\n- API keys are invalid or expired\n- API rate limits were exceeded';
+        console.error('No transactions found:', errorMsg);
+        throw new Error(errorMsg);
+      }
+
       // Process Solana transactions (use appropriate parser)
       let processedData: Partial<TradingData>;
       if (useCielo) {
@@ -2673,6 +2708,12 @@ export async function fetchTradingData(
       } else {
         // Use async version with DexScreener/CoinGecko for accurate PNL calculation
         processedData = await processHeliusTransactionsWithPrices(transactions, walletAddress);
+      }
+
+      // Validate that we got some data
+      if (!processedData || (processedData.totalTrades === 0 && processedData.totalVolume === 0)) {
+        console.warn('Processed data is empty or all zeros:', processedData);
+        // Don't throw here - might be a wallet with no trades
       }
 
       return {
@@ -2761,6 +2802,13 @@ export async function fetchTradingData(
     }
   } catch (error) {
     console.error('Error fetching trading data:', error);
+    // Log API key status for debugging
+    console.error('API Key Status:', {
+      hasHelius: !!HELIUS_API_KEY,
+      hasCielo: !!CIELO_API_KEY,
+      hasCovalent: !!COVALENT_API_KEY,
+      isProduction: import.meta.env.PROD
+    });
     throw error;
   }
 }
