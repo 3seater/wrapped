@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import html2canvas from 'html2canvas';
 import { TradingData, SlideData } from '../types';
 
 // Import background SVG images
@@ -36,6 +37,8 @@ interface SlideshowProps {
 
 export const Slideshow: React.FC<SlideshowProps> = ({ data, slides, onRestart }) => {
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
+  const [isCapturing, setIsCapturing] = useState(false);
+  const slideRef = useRef<HTMLDivElement>(null);
 
   const nextSlide = () => {
     if (currentSlideIndex < slides.length - 1) {
@@ -51,6 +54,72 @@ export const Slideshow: React.FC<SlideshowProps> = ({ data, slides, onRestart })
 
   const goToSlide = (index: number) => {
     setCurrentSlideIndex(index);
+  };
+
+  const shareToTwitter = async () => {
+    if (!slideRef.current) return;
+    
+    setIsCapturing(true);
+    
+    try {
+      // Capture the slide as a canvas
+      const canvas = await html2canvas(slideRef.current, {
+        backgroundColor: currentSlide.backgroundColor,
+        scale: 2, // Higher quality
+        logging: false,
+        useCORS: true
+      });
+      
+      // Convert to blob
+      canvas.toBlob((blob) => {
+        if (!blob) return;
+        
+        // Create download link
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.download = `crypto-wrapped-${currentSlide.id}.png`;
+        link.href = url;
+        link.click();
+        
+        // Clean up
+        URL.revokeObjectURL(url);
+        
+        // Generate tweet text based on slide
+        let tweetText = '';
+        
+        switch (currentSlide.id) {
+          case 'trades-made':
+            tweetText = `I made ${data.totalTrades.toLocaleString()} trades this year! 📊 #CryptoWrapped`;
+            break;
+          case 'total-volume':
+            tweetText = `Total trading volume: ${data.totalVolume.toLocaleString()} ${data.currency}! 💰 #CryptoWrapped`;
+            break;
+          case 'biggest-wins':
+            tweetText = `My biggest win: ${data.biggestWins[0]?.coin || 'N/A'} 🚀 #CryptoWrapped`;
+            break;
+          case 'biggest-losses':
+            tweetText = `Lessons learned from my trades 📚 #CryptoWrapped`;
+            break;
+          case 'total-pnl':
+            const pnlSign = data.totalPnL >= 0 ? '+' : '';
+            tweetText = `My 2024 Crypto Wrapped: ${pnlSign}$${Math.abs(data.totalPnL).toLocaleString()} PnL 🎯 #CryptoWrapped`;
+            break;
+          default:
+            tweetText = `Check out my Crypto Wrapped! #CryptoWrapped`;
+        }
+        
+        // Open Twitter with pre-filled text
+        const twitterUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(tweetText)}`;
+        window.open(twitterUrl, '_blank');
+        
+      }, 'image/png');
+      
+    } catch (error) {
+      console.error('Error capturing slide:', error);
+      alert('Failed to capture slide. Please try again.');
+    } finally {
+      setIsCapturing(false);
+    }
   };
 
   // Handle keyboard navigation
@@ -74,6 +143,7 @@ export const Slideshow: React.FC<SlideshowProps> = ({ data, slides, onRestart })
 
   return (
     <div
+      ref={slideRef}
       className="slide-container"
       style={{
         backgroundColor: currentSlide.backgroundColor,
@@ -100,6 +170,40 @@ export const Slideshow: React.FC<SlideshowProps> = ({ data, slides, onRestart })
           }}
         />
       )}
+      
+      {/* Share Button */}
+      <button
+        className="share-btn"
+        onClick={shareToTwitter}
+        disabled={isCapturing}
+        style={{
+          position: 'absolute',
+          top: '20px',
+          right: '20px',
+          zIndex: 10,
+          background: currentSlide.textColor === 'white' ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.2)',
+          color: currentSlide.textColor,
+          border: `2px solid ${currentSlide.textColor}`,
+          padding: '10px 20px',
+          borderRadius: '25px',
+          cursor: isCapturing ? 'not-allowed' : 'pointer',
+          fontFamily: 'Spotify Mix, sans-serif',
+          fontWeight: 'bold',
+          fontSize: '14px',
+          transition: 'all 0.2s ease',
+          opacity: isCapturing ? 0.5 : 1
+        }}
+        onMouseEnter={(e) => {
+          if (!isCapturing) {
+            e.currentTarget.style.background = currentSlide.textColor === 'white' ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.3)';
+          }
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.background = currentSlide.textColor === 'white' ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.2)';
+        }}
+      >
+        {isCapturing ? 'Capturing...' : '𝕏 Share'}
+      </button>
       
       <div className="slide-content">
         <SlideComponent data={data} />
