@@ -1844,6 +1844,27 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
           console.log(`  [${idx}] Mint: ${mint}, Change: ${change}, Type: ${change > 0 ? 'BUY' : 'SELL'}`);
         });
         
+        // CRITICAL: Check for USD1 stablecoin in this transaction FIRST, before processing tokens
+        // This is important because USD1 is used as payment (not a traded token)
+        let txUsd1Amount = 0;
+        let txUsd1Direction: 'in' | 'out' | null = null;
+        
+        if (walletAccount && walletAccount.tokenBalanceChanges) {
+          for (const tbc of walletAccount.tokenBalanceChanges) {
+            const mint = tbc.mint || tbc.tokenAddress || '';
+            if (mint === USD1_MINT) {
+              const usd1Change = parseFloat(tbc.tokenAmount?.toString() || '0');
+              const usd1Amount = Math.abs(usd1Change) / 1e9; // Convert from smallest unit
+              
+              if (usd1Amount > 0.01) {
+                txUsd1Amount = usd1Amount;
+                txUsd1Direction = usd1Change > 0 ? 'in' : 'out';
+                console.log(`[USD1 TX LEVEL] Detected USD1 in transaction: ${txUsd1Direction === 'in' ? 'receiving' : 'spending'} ${usd1Amount.toFixed(2)} USD1`);
+              }
+            }
+          }
+        }
+        
         for (const tbc of walletAccount.tokenBalanceChanges) {
           const currentTokenMint = tbc.mint || tbc.tokenAddress || '';
           const currentTokenAmount = Math.abs(parseFloat(tbc.tokenAmount?.toString() || '0'));
@@ -1916,12 +1937,11 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
               }
             }
             
-            // CRITICAL FIX: Check token balance changes for WSOL and USD1 FIRST - this is MORE ACCURATE!
+            // CRITICAL FIX: Check token balance changes for WSOL FIRST - this is MORE ACCURATE!
             // tokenBalanceChanges shows the actual NET balance change, which is what we need
             // We check this FIRST to avoid double-counting with tokenTransfers
             let wsolFromBalanceChange = 0;
             let wsolBalanceChangeDirection: 'out' | 'in' | null = null;
-            let usd1FromBalanceChange = 0;
             
             if (walletAccount && walletAccount.tokenBalanceChanges) {
               for (const tbc of walletAccount.tokenBalanceChanges) {
@@ -1941,19 +1961,6 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
                   else if (wsolChange > 0 && wsolAmount > 0.0001) {
                     wsolFromBalanceChange = wsolAmount;
                     wsolBalanceChangeDirection = 'in';
-                  }
-                }
-                
-                // Check for USD1 stablecoin
-                if (mint === USD1_MINT) {
-                  const usd1Change = parseFloat(tbc.tokenAmount?.toString() || '0');
-                  const usd1Amount = Math.abs(usd1Change) / 1e9; // tokenAmount is in smallest unit
-                  
-                  console.log(`[USD1 DETECTED] Balance change: ${usd1Change}, Amount: ${usd1Amount} USD`);
-                  
-                  // Track USD1 balance change (both buy and sell)
-                  if (usd1Amount > 0.01) {
-                    usd1FromBalanceChange = usd1Amount;
                   }
                 }
               }
@@ -1996,16 +2003,26 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
             let tradeValueUSD = 0;
             let usedStablecoin = false;
             
-            if (usd1FromBalanceChange > 0) {
-              // This trade used USD1 stablecoin
-              console.log(`[USD1 TRADE] ${currentTradeType} using USD1: ${usd1FromBalanceChange.toFixed(2)} USD`);
-              tradeValueUSD = usd1FromBalanceChange;
-              usedStablecoin = true;
+            // Check if this transaction has USD1 movement in the correct direction for this trade type
+            if (txUsd1Amount > 0) {
+              // For BUY: USD1 should be going OUT (spent)
+              // For SELL: USD1 should be coming IN (received)
+              const isUsd1TradeMatch = (currentTradeType === 'buy' && txUsd1Direction === 'out') ||
+                                       (currentTradeType === 'sell' && txUsd1Direction === 'in');
               
-              // Convert to SOL equivalent for volume tracking
-              const tradeTimestamp = Math.floor(timestamp.getTime() / 1000);
-              const solPriceForTrade = getSolPriceForTimestamp(tradeTimestamp);
-              tokenSOLVolume = tradeValueUSD / solPriceForTrade; // USD / SOL price = SOL amount
+              if (isUsd1TradeMatch) {
+                // This trade used USD1 stablecoin
+                console.log(`[USD1 TRADE] ${currentTradeType.toUpperCase()} using USD1: ${txUsd1Amount.toFixed(2)} USD for token ${currentTokenMint.slice(0, 8)}`);
+                tradeValueUSD = txUsd1Amount;
+                usedStablecoin = true;
+                
+                // Convert to SOL equivalent for volume tracking
+                const tradeTimestamp = Math.floor(timestamp.getTime() / 1000);
+                const solPriceForTrade = getSolPriceForTimestamp(tradeTimestamp);
+                tokenSOLVolume = tradeValueUSD / solPriceForTrade; // USD / SOL price = SOL amount
+                
+                console.log(`[USD1 CONVERSION] ${txUsd1Amount.toFixed(2)} USD = ${tokenSOLVolume.toFixed(4)} SOL (@ $${solPriceForTrade.toFixed(2)}/SOL)`);
+              }
             }
             
             // Use appropriate SOL amount based on trade type (if not stablecoin trade)
@@ -2178,7 +2195,7 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
               console.error(`❌ CRITICAL: No SOL/USD volume data for ${currentTokenMint.slice(0, 8)} (${currentTradeType}), skipping trade`);
               console.error(`   Transaction: ${tx.signature?.slice(0, 16)}...`);
               console.error(`   Total SOL volume: ${solVolume}, Token SOL volume: ${tokenSOLVolume}`);
-              console.error(`   USD1 volume: ${usd1FromBalanceChange}`);
+              console.error(`   TX USD1 amount: ${txUsd1Amount}, direction: ${txUsd1Direction}`);
               console.error(`   SOL out: ${solOut}, SOL in: ${solIn}`);
               console.error(`   This means the ${currentTradeType} won't be tracked!`);
               if (currentTradeType === 'buy') {
@@ -2249,7 +2266,7 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
               tokenStats[currentTokenMint].totalReceivedUSD += finalTradeValueUSD;
               
               console.log(`✅ SELL: ${tokenStats[currentTokenMint].symbol} (${currentTokenMint.slice(0, 8)}) - ${currentTokenAmount.toFixed(2)} tokens for ${usedStablecoin ? `$${finalTradeValueUSD.toFixed(2)} USD1` : `${tokenSOLVolume.toFixed(4)} SOL ($${finalTradeValueUSD.toFixed(2)} @ $${solPriceForTrade.toFixed(2)}/SOL)`}`);
-              console.log(`   TX: ${tx.signature?.slice(0, 16)}... | solIn: ${solIn}, USD1In: ${usd1FromBalanceChange}, tokenSOLVolume: ${tokenSOLVolume}`);
+              console.log(`   TX: ${tx.signature?.slice(0, 16)}... | solIn: ${solIn}, USD1: ${usedStablecoin ? txUsd1Amount : 0}, tokenSOLVolume: ${tokenSOLVolume}`);
               
               // Update position for tracking (to know if fully sold)
               if (positions[currentTokenMint] && positions[currentTokenMint].amount > 0) {
