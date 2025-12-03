@@ -736,7 +736,7 @@ async function processCieloTransactions(transactions: any[], walletAddress: stri
       } else {
         // Edge case: neither is SOL or both are SOL (shouldn't happen for normal swaps)
         // Skip this transaction
-        console.warn(`Skipping swap transaction - SOL identification issue: token0=${tx.token0_symbol} (${tx.token0_address.slice(0, 8)}), token1=${tx.token1_symbol} (${tx.token1_address.slice(0, 8)})`);
+        console.warn(`Skipping swap transaction - SOL identification issue: token0=${tx.token0_symbol} (${tx.token0_address?.slice(0, 8) || 'N/A'}), token1=${tx.token1_symbol} (${tx.token1_address?.slice(0, 8) || 'N/A'})`);
         return;
       }
       
