@@ -1452,19 +1452,24 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
     }
   }
   
-  // Fallback: fetch remaining symbols individually (try Helius first, then DexScreener)
+  // Fallback: fetch remaining symbols individually (try Helius first, then Jupiter, then DexScreener)
   const remainingMints = uniqueMintsArray.filter(mint => !tokenSymbolCache[mint]);
   if (remainingMints.length > 0) {
     console.log(`Fetching symbols for ${remainingMints.length} tokens that didn't get symbols from batch...`);
-    const symbolPromises = remainingMints.map(async (mint, index) => {
-      if (index > 0) {
-        await new Promise(resolve => setTimeout(resolve, 100)); // Slightly longer delay
+    
+    // Process in smaller batches to avoid rate limits
+    for (let i = 0; i < remainingMints.length; i++) {
+      const mint = remainingMints[i];
+      
+      // Rate limiting: 300ms delay between requests
+      if (i > 0) {
+        await new Promise(resolve => setTimeout(resolve, 300));
       }
       
-      // Try Helius first
+      // Try all sources for this token
       let symbol = await getTokenSymbolFromHelius(mint);
       
-      // If still no symbol, try DexScreener directly
+      // If still no symbol, explicitly try Jupiter again
       if (!symbol || symbol === mint.slice(0, 8) + '...') {
         try {
           const dexUrl = `https://api.dexscreener.com/latest/dex/tokens/${mint}`;
@@ -1504,14 +1509,13 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
         }
       }
       
-      return { mint, symbol: symbol || mint.slice(0, 8) + '...' };
-    });
-    const symbolResults = await Promise.all(symbolPromises);
-    symbolResults.forEach(({ mint, symbol }) => {
+      // Cache the symbol (already done in getTokenSymbolFromHelius, but ensure it's set)
       if (symbol && symbol !== mint.slice(0, 8) + '...') {
         tokenSymbolCache[mint] = symbol;
       }
-    });
+      
+      console.log(`Token ${mint.slice(0, 8)}: ${symbol || 'NO SYMBOL'}, image: ${tokenImageCache[mint] ? 'YES' : 'NO'}`);
+    }
   }
   
   const tokensWithSymbols = Object.keys(tokenSymbolCache).length;
