@@ -290,7 +290,19 @@ async function fetchCieloTransactions(
   
   if (allTransactions.length > 0) {
     console.log(`\n=== Cielo Pagination Summary ===`);
-    console.log(`Total transactions fetched: ${allTransactions.length}`);
+    console.log(`\n=== HELIUS FETCH RESULTS ===`);
+  console.log(`Total transactions fetched from Helius: ${allTransactions.length}`);
+  console.log(`Pages fetched: ${pageCount}`);
+  if (allTransactions.length > 0) {
+    const firstTx = allTransactions[0];
+    const lastTx = allTransactions[allTransactions.length - 1];
+    const firstDate = firstTx.timestamp ? new Date(firstTx.timestamp * 1000).toLocaleString() : 'NO TIMESTAMP';
+    const lastDate = lastTx.timestamp ? new Date(lastTx.timestamp * 1000).toLocaleString() : 'NO TIMESTAMP';
+    console.log(`Date range: ${firstDate} to ${lastDate}`);
+    console.log(`First TX: ${firstTx.signature?.slice(0, 16)}...`);
+    console.log(`Last TX: ${lastTx.signature?.slice(0, 16)}...`);
+  }
+  console.log(`============================\n`);
     console.log(`Total pages fetched: ${pageCount + 1}`);
     console.log(`Date range: ${allTransactions.length > 0 ? new Date(Math.min(...allTransactions.map(tx => (tx.timestamp || 0) * 1000))).toISOString() : 'N/A'} to ${allTransactions.length > 0 ? new Date(Math.max(...allTransactions.map(tx => (tx.timestamp || 0) * 1000))).toISOString() : 'N/A'}`);
     console.log(`================================\n`);
@@ -1520,12 +1532,34 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
   const year2025Start = new Date('2025-01-01').getTime() / 1000; // Unix timestamp
   const year2025End = new Date('2025-12-31T23:59:59').getTime() / 1000;
   
+  console.log(`\n=== 2025 FILTER ===`);
+  console.log(`Filter range: ${new Date(year2025Start * 1000).toLocaleString()} to ${new Date(year2025End * 1000).toLocaleString()}`);
+  console.log(`Total transactions before filter: ${transactions.length}`);
+  
   const transactions2025 = transactions.filter(tx => {
     const timestamp = tx.timestamp || 0;
     return timestamp >= year2025Start && timestamp <= year2025End;
   });
   
-  console.log(`Filtered ${transactions.length} transactions to ${transactions2025.length} from year 2025`);
+  console.log(`Transactions after 2025 filter: ${transactions2025.length}`);
+  console.log(`Filtered OUT: ${transactions.length - transactions2025.length} transactions`);
+  
+  // Show sample of filtered OUT transactions to debug
+  const filteredOut = transactions.filter(tx => {
+    const timestamp = tx.timestamp || 0;
+    return timestamp < year2025Start || timestamp > year2025End;
+  });
+  
+  if (filteredOut.length > 0) {
+    console.log(`Sample of filtered OUT transactions (showing first 5):`);
+    filteredOut.slice(0, 5).forEach((tx, idx) => {
+      const timestamp = tx.timestamp || 0;
+      const date = timestamp > 0 ? new Date(timestamp * 1000).toLocaleString() : 'NO TIMESTAMP';
+      console.log(`  [${idx}] ${tx.signature?.slice(0, 16)}... - ${date}`);
+    });
+  }
+  
+  console.log(`===================\n`);
   
   // CRITICAL: Sort transactions chronologically (oldest first) so buys are processed before sells
   // This ensures accurate cost basis calculation
@@ -2813,7 +2847,10 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
             console.log(`[SELL DEBUG] Final - Transfer: ${transfer.mint.slice(0, 8)}, txTotalSolIn: ${txTotalSolIn.toFixed(4)}, transferTokenSOLVolume: ${transferTokenSOLVolume.toFixed(4)}, solVolume: ${solVolume.toFixed(4)}`);
           }
           
+          console.log(`[STORAGE CHECK] transferTokenSOLVolume = ${transferTokenSOLVolume.toFixed(4)}, is > 0? ${transferTokenSOLVolume > 0}`);
+          
           if (transferTokenSOLVolume > 0) {
+            console.log(`[STORAGE CHECK] ✅ Entering storage block for ${transfer.tradeType} of ${transfer.mint.slice(0, 8)}...`);
             // Only count volume once per transaction (not per token)
             if (validTransfers.indexOf(transfer) === 0) {
               // Only count volume for first transfer to avoid double-counting
@@ -2856,8 +2893,13 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
               
               console.log(`Buy (from tokenTransfers): ${tokenStats[transfer.mint].symbol} (${transfer.mint.slice(0, 8)}) - ${transfer.amount.toFixed(2)} tokens for ${transferTokenSOLVolume.toFixed(4)} SOL ($${tradeValueUSD.toFixed(2)})`);
             } else if (transfer.tradeType === 'sell') {
+              console.log(`[STORAGE CHECK] SELL - About to add ${transferTokenSOLVolume.toFixed(4)} SOL to totalReceivedSOL for ${transfer.mint.slice(0, 8)}...`);
+              console.log(`[STORAGE CHECK] Current totalReceivedSOL: ${tokenStats[transfer.mint].totalReceivedSOL.toFixed(4)}`);
+              
               tokenStats[transfer.mint].totalReceivedSOL += transferTokenSOLVolume;
               tokenStats[transfer.mint].totalTokensSold += transfer.amount;
+              
+              console.log(`[STORAGE CHECK] After adding - totalReceivedSOL: ${tokenStats[transfer.mint].totalReceivedSOL.toFixed(4)} ✅`);
               
               // Convert to USD using SOL price at this trade's timestamp (more accurate)
               const tradeTimestamp = Math.floor(timestamp.getTime() / 1000);
@@ -2865,7 +2907,7 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
               const tradeValueUSD = transferTokenSOLVolume * solPriceForTrade;
               tokenStats[transfer.mint].totalReceivedUSD += tradeValueUSD;
               
-              console.log(`Sell (from tokenTransfers): ${tokenStats[transfer.mint].symbol} (${transfer.mint.slice(0, 8)}) - ${transfer.amount.toFixed(2)} tokens for ${transferTokenSOLVolume.toFixed(4)} SOL ($${tradeValueUSD.toFixed(2)})`);
+              console.log(`✅✅✅ Sell (from tokenTransfers): ${tokenStats[transfer.mint].symbol} (${transfer.mint.slice(0, 8)}) - ${transfer.amount.toFixed(2)} tokens for ${transferTokenSOLVolume.toFixed(4)} SOL ($${tradeValueUSD.toFixed(2)})`);
               
               // Update position
               if (positions[transfer.mint] && positions[transfer.mint].amount > 0) {
