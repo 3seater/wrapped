@@ -3602,27 +3602,12 @@ export async function fetchTradingData(
 ): Promise<TradingData> {
   try {
     if (network === 'solana') {
-      // Solana: Try Cielo FIRST (they have working PNL calculations!)
-      // Fallback to Helius if Cielo fails
+      // Solana: Use Helius PRIMARY (gets ALL transactions with proper pagination)
       let transactions: any[] = [];
       let useCielo = false;
       
-      // Try Cielo FIRST - their API works perfectly!
-      if (CIELO_API_KEY) {
-        try {
-          console.log('Fetching from Cielo API (primary)...');
-          transactions = await fetchCieloTransactions(walletAddress, 'solana');
-          console.log(`✅ Fetched ${transactions.length} transactions from Cielo`);
-          if (transactions.length > 0) {
-            useCielo = true;
-          }
-        } catch (error) {
-          console.warn('Cielo fetch failed, falling back to Helius:', error);
-        }
-      }
-      
-      // Fallback to Helius if Cielo fails or returns nothing
-      if (!useCielo && HELIUS_API_KEY) {
+      // Use Helius to get ALL transactions (supports proper pagination)
+      if (HELIUS_API_KEY) {
         try {
           console.log('✅ Using Helius to fetch ALL transactions (with pagination)...');
           transactions = await fetchHeliusTransactions(walletAddress);
@@ -3633,9 +3618,21 @@ export async function fetchTradingData(
         }
       }
       
-      // Cielo was already tried as primary above, skip duplicate attempt
+      // Fallback to Cielo if Helius failed (limited to ~100 transactions on free tier)
+      if (transactions.length === 0 && CIELO_API_KEY) {
+        try {
+          console.log('⚠️  Falling back to Cielo (limited transactions on free tier)...');
+          transactions = await fetchCieloTransactions(walletAddress, 'solana');
+          console.log(`Fetched ${transactions.length} transactions from Cielo`);
+          if (transactions.length > 0) {
+            useCielo = true;
+          }
+        } catch (error) {
+          console.warn('Cielo API also failed:', error);
+        }
+      }
       
-      // Fallback to Covalent for Solana if both failed
+      // Fallback to Covalent for Solana if all failed
       if (transactions.length === 0 && COVALENT_API_KEY) {
         try {
           console.log('Trying Covalent for Solana...');
