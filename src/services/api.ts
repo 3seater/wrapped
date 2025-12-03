@@ -113,7 +113,7 @@ async function fetchCieloAggregatedPNL(walletAddress: string): Promise<CieloAggr
     headers
     });
     
-    if (!response.ok) {
+  if (!response.ok) {
     const errorText = await response.text().catch(() => 'Could not read error');
     let errorData;
     try {
@@ -123,21 +123,26 @@ async function fetchCieloAggregatedPNL(walletAddress: string): Promise<CieloAggr
     }
     
     console.error('Cielo Aggregated PNL API error:', {
-        status: response.status,
-        statusText: response.statusText,
-      error: errorData
+      status: response.status,
+      statusText: response.statusText,
+      error: errorData,
+      url: url
     });
     
     // Check for subscription/plan errors
-    if (response.status === 403 || (errorData.message && errorData.message.includes('plan'))) {
+    if (response.status === 403) {
+      const errorMsg = errorData.message || errorData.error || 'Access denied';
       throw new Error(
-        'Your Cielo API plan does not include access to PNL endpoints.\n\n' +
-        'Please upgrade your subscription at https://cielo.finance/ to access this feature.\n\n' +
-        'The PNL endpoints require a paid plan.'
+        `${errorMsg}\n\n` +
+        'This may be due to:\n' +
+        '1. Your Cielo API plan does not include access to PNL endpoints\n' +
+        '2. The API key is incorrect or expired\n' +
+        '3. The API key is not set in Netlify environment variables\n\n' +
+        'Please check your subscription at https://cielo.finance/ and ensure VITE_CIELO_API_KEY is set in Netlify.'
       );
     }
     
-    throw new Error(`Cielo PNL API error: ${response.status} ${response.statusText}\n\n${errorData.message || errorText}`);
+    throw new Error(`Cielo PNL API error: ${response.status} ${response.statusText}\n\n${errorData.message || errorData.error || errorText}`);
   }
 
   const data: CieloAggregatedResponse = await response.json();
