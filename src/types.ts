@@ -12,10 +12,12 @@ export interface Trade {
 
 export interface TradingData {
   walletAddress: string;
-  totalTrades: number;
+  totalTrades: number; // Number of unique tokens traded
   totalVolume: number;
   currency: 'SOL' | 'USD'; // USD for EVM chains (aggregated)
   chains?: string[]; // Which chains were analyzed (e.g., ['eth-mainnet', 'bsc-mainnet', 'base-mainnet'])
+  winrate: number; // Winrate as a percentage (0-100)
+  medianHoldTime: number; // Median hold time in seconds
   biggestLosses: Array<{
     coin: string;
     loss: number;
@@ -57,5 +59,5 @@ export interface SlideData {
   backgroundColor: string;
   textColor: 'black' | 'white';
   backgroundImage?: string; // Optional background PNG filename
-  component: ComponentType<{ data: TradingData }>;
+  component: ComponentType<{ data?: TradingData; onRestart?: () => void }>;
 }

@@ -1,10 +1,11 @@
+import React from 'react';
 import { TradingData } from '../../types';
 
-interface BiggestWinsSlideProps {
+interface TopTradesListSlideProps {
   data: TradingData;
 }
 
-export const BiggestWinsSlide: React.FC<BiggestWinsSlideProps> = ({ data }) => {
+export const TopTradesListSlide: React.FC<TopTradesListSlideProps> = ({ data }) => {
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
@@ -14,33 +15,23 @@ export const BiggestWinsSlide: React.FC<BiggestWinsSlideProps> = ({ data }) => {
     }).format(amount);
   };
 
-  return (
-    <div className="slide biggest-wins-slide">
-      <div className="slide-header">
-        <h1 className="slide-title">My Top Trades</h1>
-      </div>
+  const topTrades = data.biggestWins.slice(0, 5);
 
-      <div className="slide-content">
-        <div className="wins-list">
-          {data.biggestWins.map((win, index) => (
-            <div key={index} className={`win-item rank-${index + 1}`}>
-              <div className="win-rank">{index + 1}</div>
-              <div className="coin-info">
+  return (
+    <div className="slide top-trades-list-slide">
+      <div className="slide-content-inner" style={{ width: '100%', alignItems: 'center' }}>
+        <h1 className="slide-title">Your Top Trades</h1>
+        <div className="wins-list-compact" style={{ width: '100%', maxWidth: '320px' }}>
+          {topTrades.map((win, index) => (
+            <div key={index} className="win-item-compact">
+              <div className="win-rank-compact">{index + 1}</div>
+              <div className="coin-info-compact">
                 {win.imageUrl ? (
                   <img 
                     src={win.imageUrl} 
                     alt={win.coin}
-                    className="coin-image"
-                    style={{
-                      width: '80px',
-                      height: '80px',
-                      objectFit: 'cover',
-                      borderRadius: '0',
-                      border: 'none',
-                      display: 'block'
-                    }}
+                    className="coin-image-compact"
                     onError={(e) => {
-                      // Fallback if image fails to load - show initial letter instead
                       const img = e.target as HTMLImageElement;
                       img.style.display = 'none';
                       const fallback = img.nextElementSibling as HTMLElement;
@@ -51,32 +42,31 @@ export const BiggestWinsSlide: React.FC<BiggestWinsSlideProps> = ({ data }) => {
                   />
                 ) : null}
                 <div 
-                  className="coin-image" 
+                  className="coin-image-compact" 
                   style={{ 
                     display: win.imageUrl ? 'none' : 'flex',
                     alignItems: 'center', 
                     justifyContent: 'center',
-                    fontSize: '2rem',
+                    fontSize: '1.2rem',
                     background: '#1db954',
                     borderRadius: '0',
                     border: 'none',
-                    width: '80px',
-                    height: '80px'
+                    width: '50px',
+                    height: '50px'
                   }}
                 >
                   {win.coin.charAt(0).toUpperCase()}
                 </div>
-                <div className="coin-details">
-                  <div className="coin-name">{win.coin}</div>
-                  <div className="win-date">{win.date.toLocaleDateString()}</div>
+                <div className="coin-details-compact">
+                  <div className="coin-name-compact">{win.coin}</div>
                 </div>
               </div>
-              <div className="win-amount">+{formatCurrency(win.profit)}</div>
+              <div className="win-amount-compact">+{formatCurrency(win.profit)}</div>
             </div>
           ))}
         </div>
-
       </div>
     </div>
   );
 };
+

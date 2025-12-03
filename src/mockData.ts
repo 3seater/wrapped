@@ -1,16 +1,20 @@
 import { TradingData, SlideData } from './types';
-import { TradesMadeSlide } from './components/slides/TradesMadeSlide';
+import { CoinsTradedSlide } from './components/slides/CoinsTradedSlide';
 import { TotalVolumeSlide } from './components/slides/TotalVolumeSlide';
-import { BiggestLossesSlide } from './components/slides/BiggestLossesSlide';
-import { BiggestWinsSlide } from './components/slides/BiggestWinsSlide';
-// import { PaperhandsSlide } from './components/slides/PaperhandsSlide'; // Temporarily disabled
-import { TotalPnLSlide } from './components/slides/TotalPnLSlide';
+import { WinrateSlide } from './components/slides/WinrateSlide';
+import { MedianHoldTimeSlide } from './components/slides/MedianHoldTimeSlide';
+import { TopTradeSlide } from './components/slides/TopTradeSlide';
+import { TopTradesListSlide } from './components/slides/TopTradesListSlide';
+import { WorstTradeSlide } from './components/slides/WorstTradeSlide';
+import { CreateAnotherSlide } from './components/slides/CreateAnotherSlide';
 
 export const mockTradingData: TradingData = {
   walletAddress: '7xKXtg2CW87Zd1rPjDL1kQe2g7pQqVzKPQ4tKdQH3P',
   totalTrades: 1247,
   totalVolume: 250000,
   currency: 'SOL',
+  winrate: 65.5,
+  medianHoldTime: 45, // 45 seconds
   biggestLosses: [
     { coin: 'BONK', loss: -5000, date: new Date('2024-03-15') },
     { coin: 'PEPE', loss: -3200, date: new Date('2024-05-22') },
@@ -41,75 +45,87 @@ export const mockTradingData: TradingData = {
   }
 };
 
-// Spotify Wrapped 2023 exact color palette from brand kit
-// Colors: FF5B49 (coral red), 400073 (deep purple), AFB1FF (lavender), 16D0A6 (teal), 000000 (black)
-// All 8 background assets included to ensure each is used at least once
-const backgroundColors = [
-  { bg: '#FF5B49', text: 'black' as const, bgImage: 'Floral.svg' }, // Coral red with floral
-  { bg: '#16D0A6', text: 'black' as const, bgImage: 'GREEN_WIGGLE2 1.svg' }, // Teal with green wiggle
-  { bg: '#400073', text: 'white' as const, bgImage: 'LAVENDER_PIXEL.svg' }, // Deep purple with lavender pixel
-  { bg: '#AFB1FF', text: 'black' as const, bgImage: 'RED_PIXEL.svg' }, // Lavender with red pixel
-  { bg: '#000000', text: 'white' as const, bgImage: 'GREEN_SHAPE2.svg' }, // Black with green shape
-  { bg: '#FF5B49', text: 'black' as const, bgImage: 'SILVER_WIGGLE2 1.svg' }, // Coral red with silver wiggle
-  { bg: '#16D0A6', text: 'black' as const, bgImage: 'Graphics 1.svg' }, // Teal with graphics
-  { bg: '#400073', text: 'white' as const, bgImage: 'Red-Pixel.svg' }, // Deep purple with red-pixel
+// Use all 10 PNG backgrounds (1080x1920) from backgrounds folder
+// Cycle through them and assign text colors (white or black based on background)
+const backgroundImages = [
+  { bg: '#000000', text: 'white' as const, bgImage: '1.png' },
+  { bg: '#000000', text: 'white' as const, bgImage: '2.png' },
+  { bg: '#000000', text: 'white' as const, bgImage: '3.png' },
+  { bg: '#000000', text: 'white' as const, bgImage: '4.png' },
+  { bg: '#000000', text: 'white' as const, bgImage: '5.png' },
+  { bg: '#000000', text: 'white' as const, bgImage: '6.png' },
+  { bg: '#000000', text: 'white' as const, bgImage: '7.png' },
+  { bg: '#000000', text: 'white' as const, bgImage: '8.png' },
+  { bg: '#000000', text: 'white' as const, bgImage: '9.png' },
+  { bg: '#000000', text: 'white' as const, bgImage: '10.png' },
 ];
 
-// Function to generate slides ensuring all background assets are used at least once
+// Function to generate slides cycling through all 10 backgrounds
 const generateSlides = (): SlideData[] => {
-  // Shuffle colors to ensure variety - all 8 assets are in backgroundColors array
-  const shuffled = [...backgroundColors].sort(() => Math.random() - 0.5);
-  let colorIndex = 0;
+  // Shuffle backgrounds to ensure variety
+  const shuffled = [...backgroundImages].sort(() => Math.random() - 0.5);
+  let bgIndex = 0;
   
-  const getNextColor = () => {
-    const color = shuffled[colorIndex % shuffled.length];
-    colorIndex++;
+  const getNextBackground = () => {
+    const bg = shuffled[bgIndex % shuffled.length];
+    bgIndex++;
     const result = { 
-      backgroundColor: color.bg, 
-      textColor: color.text,
-      backgroundImage: color.bgImage
+      backgroundColor: bg.bg, 
+      textColor: bg.text,
+      backgroundImage: bg.bgImage
     };
-    console.log(`Slide: bg=${color.bg}, text=${color.text}, bgImage=${color.bgImage}`);
+    console.log(`Slide: bg=${bg.bg}, text=${bg.text}, bgImage=${bg.bgImage}`);
     return result;
   };
 
   return [
     {
-      id: 'trades-made',
-      title: 'Trades Made',
-      ...getNextColor(),
-      component: TradesMadeSlide
+      id: 'coins-traded',
+      title: 'Coins Traded',
+      ...getNextBackground(),
+      component: CoinsTradedSlide
     },
     {
       id: 'total-volume',
       title: 'Total Volume',
-      ...getNextColor(),
+      ...getNextBackground(),
       component: TotalVolumeSlide
     },
     {
-      id: 'biggest-losses',
-      title: 'Biggest Losses',
-      ...getNextColor(),
-      component: BiggestLossesSlide
+      id: 'winrate',
+      title: 'Winrate',
+      ...getNextBackground(),
+      component: WinrateSlide
     },
     {
-      id: 'biggest-wins',
-      title: 'Biggest Wins',
-      ...getNextColor(),
-      component: BiggestWinsSlide
+      id: 'median-hold-time',
+      title: 'Median Hold Time',
+      ...getNextBackground(),
+      component: MedianHoldTimeSlide
     },
-    // Paperhands slide temporarily disabled
-    // {
-    //   id: 'paperhands',
-    //   title: 'Paperhands',
-    //   ...getNextColor(),
-    //   component: PaperhandsSlide
-    // },
     {
-      id: 'total-pnl',
-      title: 'Total PnL',
-      ...getNextColor(),
-      component: TotalPnLSlide
+      id: 'top-trade',
+      title: 'Top Trade',
+      ...getNextBackground(),
+      component: TopTradeSlide
+    },
+    {
+      id: 'top-trades-list',
+      title: 'Top Trades',
+      ...getNextBackground(),
+      component: TopTradesListSlide
+    },
+    {
+      id: 'worst-trade',
+      title: 'Worst Trade',
+      ...getNextBackground(),
+      component: WorstTradeSlide
+    },
+    {
+      id: 'create-another',
+      title: 'Create Another Wrapped',
+      ...getNextBackground(),
+      component: CreateAnotherSlide
     }
   ];
 };

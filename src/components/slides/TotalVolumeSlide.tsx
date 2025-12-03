@@ -1,3 +1,4 @@
+import React from 'react';
 import { TradingData } from '../../types';
 
 interface TotalVolumeSlideProps {
@@ -5,31 +6,20 @@ interface TotalVolumeSlideProps {
 }
 
 export const TotalVolumeSlide: React.FC<TotalVolumeSlideProps> = ({ data }) => {
-  const formatVolume = (volume: number) => {
-    if (volume >= 1000000) {
-      return `${(volume / 1000000).toFixed(1)}M`;
-    } else if (volume >= 1000) {
-      return `${(volume / 1000).toFixed(1)}K`;
-    }
-    return volume.toFixed(2);
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    }).format(amount);
   };
-
-  const currencySymbol = data.currency === 'USD' ? '$' : '';
-  const currencyDisplay = data.currency === 'USD' ? '' : data.currency;
 
   return (
     <div className="slide total-volume-slide">
-      <div className="slide-header">
-        <h1 className="slide-title">My Total Volume</h1>
-      </div>
-
-      <div className="slide-content">
-        <div className="big-number">{currencySymbol}{formatVolume(data.totalVolume)}{currencyDisplay ? ' ' + currencyDisplay : ''}</div>
-        <div className="highlight-section">
-          <div className="highlight-value">
-            <span className="detail">You traded <strong>{currencySymbol}{formatVolume(data.totalVolume)}{currencyDisplay ? ' ' + currencyDisplay : ''}</strong> worth of tokens this year</span>
-          </div>
-        </div>
+      <div className="slide-content-inner">
+        <h1 className="slide-title">Your total Volume was</h1>
+        <div className="highlight-value">{formatCurrency(data.totalVolume)}</div>
       </div>
     </div>
   );

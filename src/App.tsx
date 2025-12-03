@@ -113,19 +113,21 @@ function App() {
               lineHeight: '1.6',
               marginBottom: '1.5rem'
             }}>
-              {error.includes('API keys') ? (
+              {error.includes('API key') || error.includes('Cielo') ? (
                 <>
-                  To use this app, you need to configure API keys in Netlify:
+                  To use this app, you need to configure the Cielo API key:
                   <br /><br />
-                  <strong>1. Go to Netlify Dashboard → Site Settings → Environment Variables</strong>
+                  <strong>1. Get your API key from:</strong>
                   <br />
-                  <strong>2. Add at least one of these:</strong>
+                  <a href="https://cielo.finance/" target="_blank" rel="noopener noreferrer" style={{color: '#FF5B49', textDecoration: 'underline'}}>
+                    https://cielo.finance/
+                  </a>
+                  <br /><br />
+                  <strong>2. Add to Netlify:</strong>
                   <br />
-                  • <code style={{background: '#FF5B49', padding: '2px 6px'}}>VITE_HELIUS_API_KEY</code> (Recommended for Solana)
+                  Go to Netlify Dashboard → Site Settings → Environment Variables
                   <br />
-                  • <code style={{background: '#FF5B49', padding: '2px 6px'}}>VITE_CIELO_API_KEY</code> (Alternative for Solana)
-                  <br />
-                  • <code style={{background: '#FF5B49', padding: '2px 6px'}}>VITE_COVALENT_API_KEY</code> (For EVM chains)
+                  Add: <code style={{background: '#FF5B49', padding: '2px 6px'}}>VITE_CIELO_API_KEY</code>
                   <br /><br />
                   <strong>3. Redeploy your site</strong>
                 </>
