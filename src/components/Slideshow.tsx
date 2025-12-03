@@ -75,7 +75,7 @@ export const Slideshow: React.FC<SlideshowProps> = ({ data, slides, onRestart })
         }
 
         let resolved = false;
-        let pollInterval: NodeJS.Timeout | null = null;
+        let pollInterval: ReturnType<typeof setInterval> | null = null;
 
         const finish = () => {
           if (!resolved) {
@@ -179,7 +179,7 @@ export const Slideshow: React.FC<SlideshowProps> = ({ data, slides, onRestart })
         removeContainer: true,
         windowWidth: slideRef.current.scrollWidth,
         windowHeight: slideRef.current.scrollHeight,
-        onclone: (clonedDoc, element) => {
+        onclone: (clonedDoc) => {
           // Force full opacity on ALL elements in the cloned document
           const allElements = clonedDoc.querySelectorAll('*');
           allElements.forEach((el: Element) => {
@@ -372,7 +372,7 @@ export const Slideshow: React.FC<SlideshowProps> = ({ data, slides, onRestart })
         removeContainer: true,
         windowWidth: slideRef.current.scrollWidth,
         windowHeight: slideRef.current.scrollHeight,
-        onclone: (clonedDoc, element) => {
+        onclone: (clonedDoc) => {
           // Force full opacity on ALL elements in the cloned document
           const allElements = clonedDoc.querySelectorAll('*');
           allElements.forEach((el: Element) => {
