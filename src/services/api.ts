@@ -2576,14 +2576,66 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
           }
           
           console.log(`[WSOL TOTALS] maxWsolOut: ${maxWsolOut}, maxWsolIn: ${maxWsolIn}`);
+          
+          // CRITICAL: Also check for USD1/USDC stablecoin transfers for USD1-routed trades!
+          // For sells: Token → USD1 (stays as USD1, no SOL comes back)
+          console.log(`\n[USD1 TRANSFERS CHECK] Checking ${tx.tokenTransfers.length} transfers for stablecoins...`);
+          let maxUsd1Out = 0;
+          let maxUsd1In = 0;
+          
+          for (const transfer of tx.tokenTransfers) {
+            const mint = transfer.mint || transfer.tokenAddress || transfer.token || '';
+            
+            // Check if this is a stablecoin (USDC, USDT, PYUSD)
+            if (STABLECOIN_MINTS.includes(mint)) {
+              const from = transfer.fromUserAccount || transfer.from || '';
+              const to = transfer.toUserAccount || transfer.to || '';
+              const rawAmount = parseFloat(transfer.tokenAmount?.toString() || '0');
+              
+              // Stablecoins use 6 decimals
+              const decimals = 6;
+              const usdAmount = rawAmount / Math.pow(10, decimals);
+              
+              console.log(`[USD1 FOUND] ${mint.slice(0, 12)}... from ${from.slice(0, 8)}... to ${to.slice(0, 8)}... amount: ${usdAmount.toFixed(2)} USD`);
+              
+              if (from === walletAddress && to !== walletAddress && usdAmount > 0.01) {
+                maxUsd1Out = Math.max(maxUsd1Out, usdAmount);
+                console.log(`  → USD1 OUT (buy): ${usdAmount.toFixed(2)} USD`);
+              } else if (to === walletAddress && from !== walletAddress && usdAmount > 0.01) {
+                maxUsd1In = Math.max(maxUsd1In, usdAmount);
+                console.log(`  → USD1 IN (sell): ${usdAmount.toFixed(2)} USD ✅✅✅`);
+              }
+            }
+          }
+          
+          console.log(`[USD1 TOTALS] maxUsd1Out: ${maxUsd1Out.toFixed(2)}, maxUsd1In: ${maxUsd1In.toFixed(2)}`);
           console.log(`[NATIVE TOTALS] maxNativeSolOut: ${maxNativeSolOut}, maxNativeSolIn: ${maxNativeSolIn}`);
           
-          // CRITICAL: Use the LARGER of native or WSOL, NOT BOTH!
-          // They often represent the SAME SOL movement (native wraps to WSOL or vice versa)
-          txTotalSolOut = Math.max(maxNativeSolOut, maxWsolOut);
-          txTotalSolIn = Math.max(maxNativeSolIn, maxWsolIn);
+          // CRITICAL: If USD1 detected, convert to SOL equivalent
+          // USD1 sells: Token → USD1 (no SOL/WSOL comes back, only USD1!)
+          if (maxUsd1In > 0 && maxWsolIn === 0 && maxNativeSolIn === 0) {
+            // This is a USD1-routed sell! Convert USD1 to SOL equivalent
+            const solPriceForConversion = getSolPriceForTimestamp(Math.floor(timestamp.getTime() / 1000));
+            const solEquivalent = maxUsd1In / solPriceForConversion;
+            console.log(`[USD1 SELL DETECTED] Received ${maxUsd1In.toFixed(2)} USD, converting to SOL: ${solEquivalent.toFixed(4)} SOL (@ $${solPriceForConversion.toFixed(2)}/SOL)`);
+            txTotalSolIn = solEquivalent;
+            txTotalSolOut = Math.max(maxNativeSolOut, maxWsolOut);
+          } else if (maxUsd1Out > 0 && maxWsolOut === 0 && maxNativeSolOut === 0) {
+            // This is a USD1-routed buy! Convert USD1 to SOL equivalent
+            const solPriceForConversion = getSolPriceForTimestamp(Math.floor(timestamp.getTime() / 1000));
+            const solEquivalent = maxUsd1Out / solPriceForConversion;
+            console.log(`[USD1 BUY DETECTED] Spent ${maxUsd1Out.toFixed(2)} USD, converting to SOL: ${solEquivalent.toFixed(4)} SOL (@ $${solPriceForConversion.toFixed(2)}/SOL)`);
+            txTotalSolOut = solEquivalent;
+            txTotalSolIn = Math.max(maxNativeSolIn, maxWsolIn);
+          } else {
+            // Regular SOL/WSOL trade (no USD1)
+            // Use the LARGER of native or WSOL, NOT BOTH!
+            // They often represent the SAME SOL movement (native wraps to WSOL or vice versa)
+            txTotalSolOut = Math.max(maxNativeSolOut, maxWsolOut);
+            txTotalSolIn = Math.max(maxNativeSolIn, maxWsolIn);
+          }
           
-          console.log(`[SOL TOTALS FINAL] Using max of native/WSOL - txTotalSolOut: ${txTotalSolOut}, txTotalSolIn: ${txTotalSolIn}`);
+          console.log(`[SOL TOTALS FINAL] txTotalSolOut: ${txTotalSolOut.toFixed(4)}, txTotalSolIn: ${txTotalSolIn.toFixed(4)}\n`);
         } else if (wsolFromBalanceChange > 0) {
           // Use the balance change (more accurate, avoids double-counting)
           console.log(`\n[WSOL BALANCE CHANGE] ✅ Using WSOL balance change: ${wsolFromBalanceChange.toFixed(4)} SOL, direction: ${wsolBalanceChangeDirection}`);
