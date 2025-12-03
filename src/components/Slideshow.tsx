@@ -88,12 +88,40 @@ export const Slideshow: React.FC<SlideshowProps> = ({ data, slides, onRestart })
     setIsCapturing(true);
     
     try {
+      // Wait for slide animation to complete (500ms) + extra buffer
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
       const canvas = await html2canvas(slideRef.current, {
         backgroundColor: currentSlide.backgroundColor,
         scale: 2,
         logging: false,
         useCORS: true,
         allowTaint: true,
+        onclone: (clonedDoc) => {
+          // Force full opacity on ALL elements in the cloned document
+          const allElements = clonedDoc.querySelectorAll('*');
+          allElements.forEach((el: Element) => {
+            const htmlEl = el as HTMLElement;
+            // Force opacity to 1
+            htmlEl.style.opacity = '1';
+            htmlEl.style.transition = 'none';
+            htmlEl.style.animation = 'none';
+            
+            // Also check computed style and force if needed
+            const computedStyle = clonedDoc.defaultView?.getComputedStyle(htmlEl);
+            if (computedStyle && parseFloat(computedStyle.opacity) < 1) {
+              htmlEl.style.opacity = '1';
+            }
+          });
+          
+          // Remove any animation classes
+          const slideElements = clonedDoc.querySelectorAll('.slide');
+          slideElements.forEach((el: Element) => {
+            const htmlEl = el as HTMLElement;
+            htmlEl.style.animation = 'none';
+            htmlEl.style.opacity = '1';
+          });
+        },
         ignoreElements: (element) => {
           return element.classList.contains('share-btn') ||
                  element.classList.contains('download-btn') ||
@@ -140,12 +168,40 @@ export const Slideshow: React.FC<SlideshowProps> = ({ data, slides, onRestart })
     setIsCapturing(true);
     
     try {
+      // Wait for slide animation to complete (500ms) + extra buffer
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
       const canvas = await html2canvas(slideRef.current, {
         backgroundColor: currentSlide.backgroundColor,
         scale: 2,
         logging: false,
         useCORS: true,
         allowTaint: true,
+        onclone: (clonedDoc) => {
+          // Force full opacity on ALL elements in the cloned document
+          const allElements = clonedDoc.querySelectorAll('*');
+          allElements.forEach((el: Element) => {
+            const htmlEl = el as HTMLElement;
+            // Force opacity to 1
+            htmlEl.style.opacity = '1';
+            htmlEl.style.transition = 'none';
+            htmlEl.style.animation = 'none';
+            
+            // Also check computed style and force if needed
+            const computedStyle = clonedDoc.defaultView?.getComputedStyle(htmlEl);
+            if (computedStyle && parseFloat(computedStyle.opacity) < 1) {
+              htmlEl.style.opacity = '1';
+            }
+          });
+          
+          // Remove any animation classes
+          const slideElements = clonedDoc.querySelectorAll('.slide');
+          slideElements.forEach((el: Element) => {
+            const htmlEl = el as HTMLElement;
+            htmlEl.style.animation = 'none';
+            htmlEl.style.opacity = '1';
+          });
+        },
         ignoreElements: (element) => {
           return element.classList.contains('share-btn') ||
                  element.classList.contains('download-btn') ||
@@ -158,33 +214,8 @@ export const Slideshow: React.FC<SlideshowProps> = ({ data, slides, onRestart })
       canvas.toBlob((blob) => {
         if (!blob) return;
         
-        // Generate tweet text
-        let tweetText = '';
-        switch (currentSlide.id) {
-          case 'coins-traded':
-            tweetText = `I traded ${data.totalTrades.toLocaleString()} coins this year! 🚀`;
-            break;
-          case 'total-volume':
-            tweetText = `My total trading volume: $${data.totalVolume.toLocaleString()} 💰`;
-            break;
-          case 'winrate':
-            tweetText = `My winrate: ${Math.round(data.winrate)}% 📈`;
-            break;
-          case 'median-hold-time':
-            const holdTime = data.medianHoldTime < 60 
-              ? `${Math.round(data.medianHoldTime)} seconds`
-              : `${Math.round(data.medianHoldTime / 60)} minutes`;
-            tweetText = `My median hold time: ${holdTime} ⏱️`;
-            break;
-          case 'top-trade':
-            tweetText = `My top trade: ${data.biggestWins[0]?.coin || 'N/A'} with $${data.biggestWins[0]?.profit.toLocaleString() || '0'} PNL 🎯`;
-            break;
-          case 'worst-trade':
-            tweetText = `My worst trade: ${data.biggestLosses[0]?.coin || 'N/A'} with -$${data.biggestLosses[0]?.loss.toLocaleString() || '0'} PNL 😅`;
-            break;
-          default:
-            tweetText = `Check out my Crypto Wrapped! 🎉`;
-        }
+        // Generate tweet text - always show coins traded and website
+        const tweetText = `I traded ${data.totalTrades.toLocaleString()} coins this year\n\nCheck your wrapped at solanawrapped.xyz`;
         
         // Open Twitter with text
         const twitterUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(tweetText)}`;
