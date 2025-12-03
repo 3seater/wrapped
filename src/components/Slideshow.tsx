@@ -49,6 +49,84 @@ export const Slideshow: React.FC<SlideshowProps> = ({ data, slides, onRestart })
   const [toastMessage, setToastMessage] = useState('');
   const slideRef = useRef<HTMLDivElement>(null);
 
+  // Wait for all images to be fully loaded before capturing screenshot
+  const waitForImages = async (element: HTMLElement): Promise<void> => {
+    const images = Array.from(element.querySelectorAll('img')) as HTMLImageElement[];
+    
+    // Filter to only external images (from Cielo CDN)
+    const externalImages = images.filter(img => {
+      if (!img.src) return false;
+      return img.src.includes('logos.cielo.finance') || (img.src.startsWith('http') && !img.src.startsWith(window.location.origin));
+    });
+
+    if (externalImages.length === 0) {
+      return; // No external images to wait for
+    }
+
+    console.log(`Waiting for ${externalImages.length} external images to load...`);
+
+    // Check each image and wait if needed
+    const imageChecks = externalImages.map((img) => {
+      return new Promise<void>((resolve) => {
+        // If already fully loaded, resolve immediately
+        if (img.complete && img.naturalHeight > 0 && img.naturalWidth > 0) {
+          resolve();
+          return;
+        }
+
+        let resolved = false;
+        let pollInterval: NodeJS.Timeout | null = null;
+
+        const finish = () => {
+          if (!resolved) {
+            resolved = true;
+            if (pollInterval) clearInterval(pollInterval);
+            resolve();
+          }
+        };
+
+        // Listen for load event
+        const onLoad = () => {
+          // Double check it's actually loaded
+          if (img.complete && img.naturalHeight > 0 && img.naturalWidth > 0) {
+            finish();
+          }
+        };
+
+        // Listen for error (continue anyway)
+        const onError = () => {
+          finish();
+        };
+
+        img.addEventListener('load', onLoad, { once: true });
+        img.addEventListener('error', onError, { once: true });
+
+        // Also poll to check if loaded (in case events don't fire)
+        let pollCount = 0;
+        const maxPolls = 50; // 5 seconds max (50 * 100ms)
+        pollInterval = setInterval(() => {
+          pollCount++;
+          if (img.complete && img.naturalHeight > 0 && img.naturalWidth > 0) {
+            finish();
+          } else if (pollCount >= maxPolls) {
+            finish(); // Timeout, continue anyway
+          }
+        }, 100);
+      });
+    });
+
+    // Wait for all images with a max timeout
+    await Promise.race([
+      Promise.all(imageChecks),
+      new Promise<void>((resolve) => setTimeout(resolve, 5000)) // Max 5 second wait
+    ]);
+
+    // Give browser extra time to render the loaded images in the DOM
+    await new Promise(resolve => setTimeout(resolve, 800));
+    
+    console.log('Image loading check complete');
+  };
+
   const nextSlide = () => {
     if (currentSlideIndex < slides.length - 1) {
       setCurrentSlideIndex(currentSlideIndex + 1);
@@ -85,8 +163,11 @@ export const Slideshow: React.FC<SlideshowProps> = ({ data, slides, onRestart })
     setIsCapturing(true);
     
     try {
-      // Wait for slide animation to complete (500ms) + extra buffer
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Wait for slide animation to complete
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Wait for all images to load before capturing
+      await waitForImages(slideRef.current);
       
       const canvas = await html2canvas(slideRef.current, {
         backgroundColor: currentSlide.backgroundColor,
@@ -94,7 +175,11 @@ export const Slideshow: React.FC<SlideshowProps> = ({ data, slides, onRestart })
         logging: false,
         useCORS: true,
         allowTaint: true,
-        onclone: (clonedDoc) => {
+        imageTimeout: 20000, // 20 second timeout for images
+        removeContainer: true,
+        windowWidth: slideRef.current.scrollWidth,
+        windowHeight: slideRef.current.scrollHeight,
+        onclone: (clonedDoc, element) => {
           // Force full opacity on ALL elements in the cloned document
           const allElements = clonedDoc.querySelectorAll('*');
           allElements.forEach((el: Element) => {
@@ -117,6 +202,18 @@ export const Slideshow: React.FC<SlideshowProps> = ({ data, slides, onRestart })
             const htmlEl = el as HTMLElement;
             htmlEl.style.animation = 'none';
             htmlEl.style.opacity = '1';
+          });
+          
+          // Ensure images are visible and properly handled in the cloned document
+          const images = clonedDoc.querySelectorAll('img');
+          images.forEach((img: HTMLImageElement) => {
+            // Ensure image is visible
+            img.style.display = 'block';
+            img.style.opacity = '1';
+            img.style.visibility = 'visible';
+            
+            // For external images, ensure they're properly referenced
+            // html2canvas should be able to capture them if they're loaded
           });
         },
         ignoreElements: (element) => {
@@ -159,14 +256,111 @@ export const Slideshow: React.FC<SlideshowProps> = ({ data, slides, onRestart })
     }
   };
 
+  // Generate slide-specific tweet text based on current slide
+  const generateTweetText = (slideId: string, tradingData: TradingData): string => {
+    const formatCurrency = (amount: number) => {
+      return new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'USD',
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0,
+      }).format(amount);
+    };
+
+    let tweetText = '';
+
+    switch (slideId) {
+      case 'top-trades-list':
+        // "My top trades were groo, drip, hype 2 etc."
+        const topTrades = tradingData.biggestWins.slice(0, 5);
+        if (topTrades.length > 0) {
+          const coinNames = topTrades.map(win => win.coin).join(', ');
+          tweetText = `My top trades were ${coinNames}`;
+        } else {
+          tweetText = `My top trades were amazing this year`;
+        }
+        break;
+
+      case 'top-trade':
+        // Single top trade
+        const topTrade = tradingData.biggestWins[0];
+        if (topTrade) {
+          tweetText = `My top trade was ${topTrade.coin} with ${formatCurrency(topTrade.profit)} profit`;
+        } else {
+          tweetText = `My top trade was amazing!`;
+        }
+        break;
+
+      case 'worst-trade':
+        // Worst trade
+        const worstTrade = tradingData.biggestLosses[0];
+        if (worstTrade) {
+          tweetText = `My worst trade was ${worstTrade.coin} with ${formatCurrency(Math.abs(worstTrade.loss))} loss`;
+        } else {
+          tweetText = `I had some tough trades this year`;
+        }
+        break;
+
+      case 'coins-traded':
+        // Coins traded count
+        tweetText = `I traded ${tradingData.totalTrades.toLocaleString()} coins this year`;
+        break;
+
+      case 'total-volume':
+        // Total volume
+        tweetText = `My total trading volume was ${formatCurrency(tradingData.totalVolume)}`;
+        break;
+
+      case 'winrate':
+        // Winrate percentage
+        const winrate = Math.round(tradingData.winrate || 0);
+        tweetText = `I had a ${winrate}% winrate this year`;
+        break;
+
+      case 'median-hold-time':
+        // Median hold time
+        const seconds = tradingData.medianHoldTime || 0;
+        const hours = Math.floor(seconds / 3600);
+        const minutes = Math.floor((seconds % 3600) / 60);
+        let timeText = '';
+        if (hours > 0) {
+          timeText = `${hours} hour${hours > 1 ? 's' : ''}`;
+          if (minutes > 0) {
+            timeText += ` and ${minutes} minute${minutes > 1 ? 's' : ''}`;
+          }
+        } else if (minutes > 0) {
+          timeText = `${minutes} minute${minutes > 1 ? 's' : ''}`;
+        } else {
+          timeText = `${seconds} second${seconds !== 1 ? 's' : ''}`;
+        }
+        tweetText = `My median hold time was ${timeText}`;
+        break;
+
+      case 'create-another':
+        // Create another wrapped - generic message
+        tweetText = `Check out my Solana wrapped!`;
+        break;
+
+      default:
+        // Default fallback
+        tweetText = `I traded ${tradingData.totalTrades.toLocaleString()} coins this year`;
+    }
+
+    // Add website link at the end
+    return `${tweetText}\n\nCheck your wrapped at solanawrapped.xyz`;
+  };
+
   const shareToTwitterDirect = async () => {
     if (!slideRef.current) return;
     
     setIsCapturing(true);
     
     try {
-      // Wait for slide animation to complete (500ms) + extra buffer
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Wait for slide animation to complete
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Wait for all images to load before capturing
+      await waitForImages(slideRef.current);
       
       const canvas = await html2canvas(slideRef.current, {
         backgroundColor: currentSlide.backgroundColor,
@@ -174,7 +368,11 @@ export const Slideshow: React.FC<SlideshowProps> = ({ data, slides, onRestart })
         logging: false,
         useCORS: true,
         allowTaint: true,
-        onclone: (clonedDoc) => {
+        imageTimeout: 20000, // 20 second timeout for images
+        removeContainer: true,
+        windowWidth: slideRef.current.scrollWidth,
+        windowHeight: slideRef.current.scrollHeight,
+        onclone: (clonedDoc, element) => {
           // Force full opacity on ALL elements in the cloned document
           const allElements = clonedDoc.querySelectorAll('*');
           allElements.forEach((el: Element) => {
@@ -198,6 +396,18 @@ export const Slideshow: React.FC<SlideshowProps> = ({ data, slides, onRestart })
             htmlEl.style.animation = 'none';
             htmlEl.style.opacity = '1';
           });
+          
+          // Ensure images are visible and properly handled in the cloned document
+          const images = clonedDoc.querySelectorAll('img');
+          images.forEach((img: HTMLImageElement) => {
+            // Ensure image is visible
+            img.style.display = 'block';
+            img.style.opacity = '1';
+            img.style.visibility = 'visible';
+            
+            // For external images, ensure they're properly referenced
+            // html2canvas should be able to capture them if they're loaded
+          });
         },
         ignoreElements: (element) => {
           return element.classList.contains('share-btn') ||
@@ -211,8 +421,8 @@ export const Slideshow: React.FC<SlideshowProps> = ({ data, slides, onRestart })
       canvas.toBlob((blob) => {
         if (!blob) return;
         
-        // Generate tweet text - always show coins traded and website
-        const tweetText = `I traded ${data.totalTrades.toLocaleString()} coins this year\n\nCheck your wrapped at solanawrapped.xyz`;
+        // Generate slide-specific tweet text
+        const tweetText = generateTweetText(currentSlide.id, data);
         
         // Open Twitter with text
         const twitterUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(tweetText)}`;
