@@ -328,7 +328,7 @@ async function fetchHeliusTransactions(
   let before: string | null = null;
   let hasMore = true;
   let pageCount = 0;
-  const maxPages = 50; // Safety limit to prevent infinite loops
+  const maxPages = 100; // Increased to fetch more history for full 2025 year
 
   console.log('Fetching all transactions from Helius with pagination...');
   
@@ -341,8 +341,9 @@ async function fetchHeliusTransactions(
         await new Promise(resolve => setTimeout(resolve, 500)); // 500ms delay between pages
       }
       
-      // Request token balance changes and native balance changes in the response
-      let standardUrl = `https://api.helius.xyz/v0/addresses/${walletAddress}/transactions?api-key=${HELIUS_API_KEY}&type=SWAP&type=TRANSFER`;
+      // Request ALL transactions (don't filter by type - USD1 sells might have different types)
+      // We'll filter by trade activity after fetching
+      let standardUrl = `https://api.helius.xyz/v0/addresses/${walletAddress}/transactions?api-key=${HELIUS_API_KEY}`;
       
       // Add pagination parameter if we have a before signature
       if (before) {
