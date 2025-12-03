@@ -2782,18 +2782,35 @@ async function processHeliusTransactionsWithPrices(transactions: any[], walletAd
               console.log(`[SELL] Multiple tokens - proportion: ${proportion}, transferTokenSOLVolume: ${transferTokenSOLVolume}`);
             }
             
-            // Fallback: use native balance change if still 0 (but NOT solVolume to avoid double-counting)
-            if (transferTokenSOLVolume === 0 && walletAccount?.nativeBalanceChange) {
-              const nativeChange = parseFloat(walletAccount.nativeBalanceChange.toString()) / 1e9;
-              if (nativeChange > 0) {
-                transferTokenSOLVolume = nativeChange / validTransfers.length;
+            // CRITICAL FALLBACK for USD1 sells: use native balance change if transferTokenSOLVolume is still 0
+            if (transferTokenSOLVolume === 0) {
+              console.log(`[SELL FALLBACK] transferTokenSOLVolume is 0, checking native balance change...`);
+              console.log(`[SELL FALLBACK] walletAccount exists: ${!!walletAccount}`);
+              console.log(`[SELL FALLBACK] nativeBalanceChange: ${walletAccount?.nativeBalanceChange}`);
+              
+              if (walletAccount?.nativeBalanceChange) {
+                const nativeChange = parseFloat(walletAccount.nativeBalanceChange.toString()) / 1e9;
+                console.log(`[SELL FALLBACK] Native change in SOL: ${nativeChange.toFixed(6)}`);
+                
+                if (nativeChange > 0.0001) {
+                  transferTokenSOLVolume = nativeChange / validTransfers.length;
+                  console.log(`[SELL FALLBACK] ✅ Using native balance change: ${transferTokenSOLVolume.toFixed(4)} SOL`);
+                } else if (Math.abs(nativeChange) > 0.0001) {
+                  // Even if negative, the absolute value might be the sell amount (weird edge case)
+                  transferTokenSOLVolume = Math.abs(nativeChange) / validTransfers.length;
+                  console.log(`[SELL FALLBACK] ✅ Using ABS(native balance change): ${transferTokenSOLVolume.toFixed(4)} SOL`);
+                }
+              }
+              
+              // LAST RESORT: Use solVolume if we still have nothing
+              if (transferTokenSOLVolume === 0 && solVolume > 0.0001) {
+                transferTokenSOLVolume = solVolume / validTransfers.length;
+                console.log(`[SELL FALLBACK] ⚠️ LAST RESORT - Using solVolume: ${transferTokenSOLVolume.toFixed(4)} SOL`);
               }
             }
             
             // Debug logging
-            if (txTotalSolIn > 0) {
-              console.log(`[SELL DEBUG] Transfer: ${transfer.mint.slice(0, 8)}, txTotalSolIn: ${txTotalSolIn}, transferTokenSOLVolume: ${transferTokenSOLVolume}, solVolume: ${solVolume}`);
-            }
+            console.log(`[SELL DEBUG] Final - Transfer: ${transfer.mint.slice(0, 8)}, txTotalSolIn: ${txTotalSolIn.toFixed(4)}, transferTokenSOLVolume: ${transferTokenSOLVolume.toFixed(4)}, solVolume: ${solVolume.toFixed(4)}`);
           }
           
           if (transferTokenSOLVolume > 0) {
