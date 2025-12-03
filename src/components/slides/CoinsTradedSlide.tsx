@@ -2,10 +2,11 @@ import React from 'react';
 import { TradingData } from '../../types';
 
 interface CoinsTradedSlideProps {
-  data: TradingData;
+  data?: TradingData;
 }
 
 export const CoinsTradedSlide: React.FC<CoinsTradedSlideProps> = ({ data }) => {
+  if (!data) return null;
   // Calculate top % of traders (rough estimate based on tokens traded)
   // This is a simplified calculation - you can adjust the formula
   const calculateTopPercent = (tokensTraded: number): number => {

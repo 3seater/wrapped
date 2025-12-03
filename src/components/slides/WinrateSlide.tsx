@@ -2,10 +2,11 @@ import React from 'react';
 import { TradingData } from '../../types';
 
 interface WinrateSlideProps {
-  data: TradingData;
+  data?: TradingData;
 }
 
 export const WinrateSlide: React.FC<WinrateSlideProps> = ({ data }) => {
+  if (!data) return null;
   const winrate = Math.round(data.winrate || 0);
 
   return (

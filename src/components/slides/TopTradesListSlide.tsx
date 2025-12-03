@@ -2,10 +2,11 @@ import React from 'react';
 import { TradingData } from '../../types';
 
 interface TopTradesListSlideProps {
-  data: TradingData;
+  data?: TradingData;
 }
 
 export const TopTradesListSlide: React.FC<TopTradesListSlideProps> = ({ data }) => {
+  if (!data) return null;
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-US', {
       style: 'currency',

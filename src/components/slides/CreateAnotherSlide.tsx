@@ -1,10 +1,11 @@
 import React from 'react';
 
 interface CreateAnotherSlideProps {
-  onRestart: () => void;
+  onRestart?: () => void;
 }
 
 export const CreateAnotherSlide: React.FC<CreateAnotherSlideProps> = ({ onRestart }) => {
+  if (!onRestart) return null;
   return (
     <div className="slide create-another-slide">
       <div className="slide-content-inner">

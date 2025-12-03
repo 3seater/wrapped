@@ -61,9 +61,6 @@ export const Slideshow: React.FC<SlideshowProps> = ({ data, slides, onRestart })
     }
   };
 
-  const goToSlide = (index: number) => {
-    setCurrentSlideIndex(index);
-  };
 
 
   // Handle keyboard navigation

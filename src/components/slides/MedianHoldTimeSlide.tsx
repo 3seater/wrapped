@@ -2,10 +2,11 @@ import React from 'react';
 import { TradingData } from '../../types';
 
 interface MedianHoldTimeSlideProps {
-  data: TradingData;
+  data?: TradingData;
 }
 
 export const MedianHoldTimeSlide: React.FC<MedianHoldTimeSlideProps> = ({ data }) => {
+  if (!data) return null;
   const formatTime = (seconds: number): string => {
     if (seconds < 60) {
       return `${Math.round(seconds)} seconds`;
