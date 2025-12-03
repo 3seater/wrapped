@@ -8,7 +8,7 @@ const CIELO_API_KEY = import.meta.env.VITE_CIELO_API_KEY
 
 // Log API key status (without exposing keys) - Debug info
 console.log('🔑 API Key Status:', {
-  hasCielo: !!CIELO_API_KEY,
+    hasCielo: !!CIELO_API_KEY,
   keyLength: CIELO_API_KEY.length,
   keyPrefix: CIELO_API_KEY ? CIELO_API_KEY.substring(0, 8) + '...' : 'NOT FOUND',
   isProduction: import.meta.env.PROD,
@@ -71,7 +71,7 @@ interface CieloAggregatedResponse {
 
 interface CieloTokenPNLResponse {
   result: {
-    data: {
+  data: {
       json: {
         data: {
           tokens: CieloTokenPNL[];
@@ -96,31 +96,24 @@ async function fetchCieloAggregatedPNL(walletAddress: string): Promise<CieloAggr
     throw new Error('Cielo API key not configured. Please add VITE_CIELO_API_KEY to your environment variables.');
   }
 
-  // Use proxy in development, direct URL in production (if CORS allows)
+  // Use proxy in development, Netlify function in production
   const isDev = import.meta.env.DEV;
-  // Cielo endpoint: /api/v1/{wallet}/pnl/total-stats
-  // Proxy rewrites /api/cielo/pnl to /api/v1
   const url = isDev
     ? `/api/cielo/pnl/${walletAddress}/pnl/total-stats?timeframe=max`
-    : `https://feed-api.cielo.finance/api/v1/${walletAddress}/pnl/total-stats?timeframe=max`;
+    : `/.netlify/functions/cielo-pnl/${walletAddress}`;
   
-  console.log('Fetching aggregated PNL from Cielo...', { isDev, url: url.replace(CIELO_API_KEY, '***') });
+  console.log('Fetching aggregated PNL from Cielo...', { isDev, url });
   
   const headers: HeadersInit = {
     'accept': 'application/json',
   };
   
-  // Only add API key header if not using proxy (production)
-  if (!isDev) {
-    headers['X-API-KEY'] = CIELO_API_KEY;
-  }
-  
-  const response = await fetch(url, {
-    method: 'GET',
+    const response = await fetch(url, {
+      method: 'GET',
     headers
-  });
-
-  if (!response.ok) {
+    });
+    
+    if (!response.ok) {
     const errorText = await response.text().catch(() => 'Could not read error');
     let errorData;
     try {
@@ -130,8 +123,8 @@ async function fetchCieloAggregatedPNL(walletAddress: string): Promise<CieloAggr
     }
     
     console.error('Cielo Aggregated PNL API error:', {
-      status: response.status,
-      statusText: response.statusText,
+        status: response.status,
+        statusText: response.statusText,
       error: errorData
     });
     
@@ -183,12 +176,12 @@ async function fetchCieloTokenPNL(
     }
   };
 
-  // Use proxy in development, direct URL in production (if CORS allows)
+  // Use proxy in development, Netlify function in production
   const isDev = import.meta.env.DEV;
   const encodedInput = encodeURIComponent(JSON.stringify(requestBody));
   const url = isDev
     ? `/api/cielo/trpc/profile.fetchTokenPnlSlow?input=${encodedInput}`
-    : `https://app.cielo.finance/api/trpc/profile.fetchTokenPnlSlow?input=${encodedInput}`;
+    : `/.netlify/functions/cielo-token-pnl?input=${encodedInput}`;
   
   console.log(`Fetching token PNL from Cielo (sort: ${sortBy})...`, { isDev });
   
@@ -198,14 +191,14 @@ async function fetchCieloTokenPNL(
       'accept': 'application/json',
     }
   });
-
-  if (!response.ok) {
-    const errorText = await response.text().catch(() => 'Could not read error');
+    
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => 'Could not read error');
     console.error('Cielo Token PNL API error:', {
-      status: response.status,
-      statusText: response.statusText,
-      error: errorText
-    });
+          status: response.status,
+          statusText: response.statusText,
+          error: errorText
+        });
     throw new Error(`Cielo Token PNL API error: ${response.status} ${response.statusText}`);
   }
 
@@ -280,8 +273,8 @@ async function processCieloPNLData(walletAddress: string): Promise<Partial<Tradi
       athPrice: number;
       potentialProfit: number;
       chain?: string;
-    }> = [];
-
+        }> = [];
+        
     for (const token of topTokens) {
       // Check if token was fully sold and current price is significantly higher than sell price
       if (token.holding_amount === 0 && token.total_sell_amount > 0) {
@@ -296,9 +289,9 @@ async function processCieloPNLData(walletAddress: string): Promise<Partial<Tradi
             athPrice: currentPrice,
             potentialProfit: (currentPrice - avgSellPrice) * token.total_sell_amount,
             chain: token.chain || 'solana'
-          });
+            });
+          }
         }
-      }
     }
 
     // Sort paperhands by potential profit (biggest missed opportunity first)
@@ -317,7 +310,7 @@ async function processCieloPNLData(walletAddress: string): Promise<Partial<Tradi
       pnl: aggregated.realized_pnl_usd / 365 // Rough daily average
     };
 
-    return {
+  return {
       totalTrades: aggregated.tokens_traded,
       totalVolume: aggregated.total_buy_usd + aggregated.total_sell_usd,
       totalPnL: aggregated.realized_pnl_usd,
@@ -367,34 +360,34 @@ export async function fetchTradingData(
     const processedData = await processCieloPNLData(walletAddress);
 
     // Validate that we got meaningful data
-    if (!processedData || (processedData.totalTrades === 0 && processedData.totalVolume === 0)) {
+      if (!processedData || (processedData.totalTrades === 0 && processedData.totalVolume === 0)) {
       throw new Error(
         'No trading activity found for this wallet address.\n' +
         'This wallet may not have any trades, or the data may still be processing.'
       );
-    }
+      }
 
-    return {
-      walletAddress,
+      return {
+        walletAddress,
       currency: 'USD', // Cielo returns everything in USD
       totalTrades: processedData.totalTrades || 0,
       totalVolume: processedData.totalVolume || 0,
       totalPnL: processedData.totalPnL || 0,
       winrate: processedData.winrate || 0,
       medianHoldTime: processedData.medianHoldTime || 0,
-      biggestLosses: processedData.biggestLosses || [],
-      biggestWins: processedData.biggestWins || [],
-      paperhands: processedData.paperhands || [],
-      biggestTradingDay: processedData.biggestTradingDay || {
-        date: new Date().toLocaleDateString(),
-        trades: 0
-      },
-      highestPnLDay: processedData.highestPnLDay || {
-        date: new Date().toLocaleDateString(),
-        pnl: 0
-      }
-    } as TradingData;
-  } catch (error) {
+        biggestLosses: processedData.biggestLosses || [],
+        biggestWins: processedData.biggestWins || [],
+        paperhands: processedData.paperhands || [],
+        biggestTradingDay: processedData.biggestTradingDay || {
+          date: new Date().toLocaleDateString(),
+          trades: 0
+        },
+        highestPnLDay: processedData.highestPnLDay || {
+          date: new Date().toLocaleDateString(),
+          pnl: 0
+        }
+      } as TradingData;
+        } catch (error) {
     console.error('Error fetching trading data:', error);
     
     // Provide helpful error messages
