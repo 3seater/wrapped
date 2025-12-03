@@ -652,8 +652,19 @@ async function processCieloTransactions(transactions: any[], walletAddress: stri
       });
     }
 
-    // Process transactions in chronological order
+    // 2025 Filter
+    const year2025Start = new Date('2025-01-01').getTime() / 1000;
+    const year2025End = new Date('2025-12-31T23:59:59').getTime() / 1000;
+    
+    // Process transactions in chronological order (filter to 2025 only)
     sortedTransactions.forEach((tx) => {
+      const txTimestamp = tx.timestamp || tx.block_time || tx.blockTime || 0;
+      
+      // Skip transactions outside 2025
+      if (txTimestamp < year2025Start || txTimestamp > year2025End) {
+        return; // Skip this transaction
+      }
+      
       const timestamp = tx.timestamp ? new Date(tx.timestamp * 1000) : new Date();
       const date = timestamp.toLocaleDateString();
       
@@ -3591,13 +3602,27 @@ export async function fetchTradingData(
 ): Promise<TradingData> {
   try {
     if (network === 'solana') {
-      // Solana: Use Helius for ALL transactions + Helius getAsset for token symbols
-      // This gives us: All transactions (via pagination) + Token symbols (via getAsset)
+      // Solana: Try Cielo FIRST (they have working PNL calculations!)
+      // Fallback to Helius if Cielo fails
       let transactions: any[] = [];
       let useCielo = false;
       
-      // Use Helius first to get ALL transactions (supports pagination)
-      if (HELIUS_API_KEY) {
+      // Try Cielo FIRST - their API works perfectly!
+      if (CIELO_API_KEY) {
+        try {
+          console.log('Fetching from Cielo API (primary)...');
+          transactions = await fetchCieloTransactions(walletAddress, 'solana');
+          console.log(`✅ Fetched ${transactions.length} transactions from Cielo`);
+          if (transactions.length > 0) {
+            useCielo = true;
+          }
+        } catch (error) {
+          console.warn('Cielo fetch failed, falling back to Helius:', error);
+        }
+      }
+      
+      // Fallback to Helius if Cielo fails or returns nothing
+      if (!useCielo && HELIUS_API_KEY) {
         try {
           console.log('✅ Using Helius to fetch ALL transactions (with pagination)...');
           transactions = await fetchHeliusTransactions(walletAddress);
@@ -3608,22 +3633,7 @@ export async function fetchTradingData(
         }
       }
       
-      // Fallback to Cielo if Helius failed (limited to 100 transactions)
-      if (transactions.length === 0 && CIELO_API_KEY) {
-        try {
-          console.log('⚠️  Falling back to Cielo (limited to 100 transactions)...');
-          transactions = await fetchCieloTransactions(walletAddress, 'solana');
-          console.log(`Fetched ${transactions.length} transactions from Cielo`);
-          if (transactions.length > 0) {
-            useCielo = true;
-            if (transactions.length === 100) {
-              console.warn('⚠️  WARNING: Cielo returned exactly 100 transactions. You may be missing older transactions!');
-            }
-          }
-        } catch (error) {
-          console.warn('Cielo API failed, trying Covalent:', error);
-        }
-      }
+      // Cielo was already tried as primary above, skip duplicate attempt
       
       // Fallback to Covalent for Solana if both failed
       if (transactions.length === 0 && COVALENT_API_KEY) {
