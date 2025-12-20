@@ -81,3 +81,4 @@ If you still get errors:
 - Check function logs in Netlify Dashboard
 - Verify API key at: https://cielo.finance/
 
+
